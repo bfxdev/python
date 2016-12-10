@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+	<xs:annotation><xs:documentation>
+XML schema definition of list of events definition used by regulog.py
+	</xs:documentation></xs:annotation>
+	<xs:element name="Regulog">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element name="EventType" minOccurs="1" maxOccurs="unbounded">
+					<xs:complexType>
+						<xs:sequence>
+							<xs:element name="Name" type="xs:string" minOccurs="1" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Name of the event used for sorting within the XML files, available as variable _name
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="Description" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Description of the event, available as variable _description
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="RexFilename" type="xs:string" minOccurs="1" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Regular expression matching the file name of the log to find this event 
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="RexText" type="xs:string" minOccurs="1" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Regular expression matching the text in the log file, i.e. text pattern, used to match the event. If found, the event text is available as variable _raw.
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="MultilineCount" type="xs:int" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Number of lines to scan in a multiline pattern, default is 1
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="CaseSensitive" type="xs:boolean" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Number of lines to scan in a multiline pattern, default is 1
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="RexTimestamp" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Regular expression matching the time stamp in the event text (parsed once event has been matched). 
+								</xs:documentation></xs:annotation>								
+							</xs:element>
+							
+							<xs:element name="DisplayOnMatch" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Display string in event is matched. This string may contain variables as {variable} 
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="DisplayIfChanged" type="xs:boolean" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+If set to true, DisplayOnMatch string in event is displayed only if the named groups changed 
+								</xs:documentation></xs:annotation>
+							</xs:element>
+								
+							<xs:element name="ExecOnInit" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Python code to be executed on start of the search session
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="ExecOnMatch" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Python code to be executed on match of the text regexp
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="ExecOnWrapup" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Python code to be executed at the end of the search session (all events found and sorted)
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+						</xs:sequence>
+					</xs:complexType>
+				</xs:element>
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+
+</xs:schema>
+
+
+
+
+
+
