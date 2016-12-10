@@ -1,0 +1,1 @@
+This directory contains the program as a packed archive renamed in .py
