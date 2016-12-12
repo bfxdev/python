@@ -72,7 +72,7 @@ Known issues:
 # 0.6.6   : Added Python functions, fully pseudo-path in _source_path, fixed multiline issue
 # 0.6.7   : Further Python functions (e.g. get_fields), __str__ for Event, _user_fields
 
-__version__ = "0.6.7-aib"
+__version__ = "0.6.7"
 
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
 # TODO prevent changing XML structure and comments when saving event type
