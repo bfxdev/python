@@ -72,7 +72,7 @@ Known issues:
 # 0.6.6   : Added Python functions, fully pseudo-path in _source_path, fixed multiline issue
 # 0.6.7   : Further Python functions (e.g. get_fields), __str__ for Event, _user_fields
 
-__version__ = "0.6.7"
+__version__ = "0.6.7-aib"
 
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
 # TODO prevent changing XML structure and comments when saving event type
@@ -1709,11 +1709,19 @@ def main(argv):
          "may match non-wanted files due to text at the beginning of the source path. For "      +\
          "example '.*ipsec.*\.log.*' can match any file ending with '.log' in an archive called "+\
          "'ipsec-18122016.zip'. You can use '[^/]*' for parts where directories must be excluded."
-
-  si.addOption("Path Filter Regex", desc, "R", "f", "pathfilter", ".*\\.log.*")
+  if 'aib' in __version__:
+    # aib specific:
+    val = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.pmf.*|.*)" +\
+      "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
+      "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|GCM|ground|ipsec|agsm)"+\
+      "[^/]*\\.log[^/]*|messages)"
+  else:
+    val = ".*\\.log.*"
+  si.addOption("Path Filter Regex", desc, "R", "f", "pathfilter", val)
 
   desc = "Semicolon-separated list of valid archive extensions"
   val = ".zip;.tar;.tar.gz;.tgz"
+  if 'aib' in __version__: val += ";.pmf"
   si.addOption("Archive extensions", desc, "S", "e", "extarchive", val, format='W160')
 
   desc = "Displays overview of input log files, based on filenamess/dirs structure (not content)"
@@ -1766,7 +1774,7 @@ def main(argv):
                 "search", lambda: search(si), ["inlogpaths"],
                 ["pathfilter", "outputdir", "ineventtypes"])
 
-# TODO: modify bfScriptInterface to take all parameters into account whater the position of
+# FIXME: modify bfScriptInterface to take all parameters into account whater the position of
 #        the command on the HMI
 #                "name", "description", "rexfilename",
 #                 "rextext", "rextimestamp", "displayonmatch",
@@ -1791,11 +1799,16 @@ def main(argv):
          "  _Y: year (4 or 2 digits supported, default to file timestamp if not present)\n"      +\
          "  _M: month (2 digits or at least 3 first letters of the month name in English)\n"     +\
          "  _D: day, _h: hour, _m: minute, _s: second (default to 00 if not present)"
-  val = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);|"   +\
-   r"^\[(?P<_D1>\d\d)/(?P<_M1>\d\d)/(?P<_Y1>\d?\d?\d\d) (?P<_h1>\d\d):(?P<_m1>\d\d):(?P<_s1>\d\d)\]|"+\
-   r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):(?P<_s2>\d\d),|"    +\
-   r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>\d\d) (?P<_h3>\d\d):(?P<_m3>\d\d):(?P<_s3>\d\d) |"     +\
-   r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#"
+  if 'aib' in __version__:
+    # aib specific:
+    val = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);|" +\
+     r"^\[(?P<_D1>\d\d)/(?P<_M1>\d\d)/(?P<_Y1>\d?\d?\d\d) (?P<_h1>\d\d):(?P<_m1>\d\d):"          +\
+     r"(?P<_s1>\d\d)\]|"                                                                         +\
+     r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):(?P<_s2>\d\d),|"  +\
+     r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>[0123 ]\d) (?P<_h3>\d\d):(?P<_m3>\d\d):(?P<_s3>\d\d) |"+\
+     r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#"
+  else:
+    val = r"^(?P<_Y>\d{4})-(?P<_D>\d\d)-(?P<_M>\d\d) (?P<_h>\d\d):(?P<_m>\d\d):(?P<_s>\d\d)"
   si.addOption("Timestamp Regex", desc, 'R', "S", "rextimestamp", val, format='')
 
   desc = "For the Default Event Type, regular expression text pattern used for matching text "   +\
