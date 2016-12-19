@@ -28,9 +28,12 @@ ReguLog can be used via a GUI (start script with no argument) or on the command 
 
 Known issues:
  - A tar file packed in a zip file cannot be read ("seek" error)
- - During search, too many displayed events can lead to HMI freeze (QT issue) or crash. As a
-   workaround set the verbosity to "Quiet".
- - "Kill" button does not work (issue in bfScriptInterface and QT, not specific to regulog)
+ - QT: during search, too many displayed events can lead to HMI freeze or crash. As a
+   workaround set the verbosity to "Quiet" or run the tool in command-line mode.
+ - QT/bfScriptInterface: "Kill" button does not work
+ - QT/bfScriptInterface: console view is scrolled to bottom when new text is generated, so
+   it is not possible to keep the view during command execution
+ - QT: it is not possible to select multiple directories
 """
 
 #Revisions:
@@ -71,14 +74,18 @@ Known issues:
 # 0.6.5   : Moved code to new EventSet class with lookup, corrections in scanPath
 # 0.6.6   : Added Python functions, fully pseudo-path in _source_path, fixed multiline issue
 # 0.6.7   : Further Python functions (e.g. get_fields), __str__ for Event, _user_fields
+# 0.6.8   : Kill button grayed, user fields from timestamp rex, _core, _flat_core
 
-__version__ = "0.6.7"
+__version__ = "0.6.8"
 
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
 # TODO prevent changing XML structure and comments when saving event type
 # TODO improve events search performance
-# TODO add option remove duplicate events
+# TODO add option remove duplicated events
 # TODO add compilation before starting code (to verify syntax)
+# TODO add new virtual fields (_reduced_raw, _reduced_flat) to hide timestamp rex span
+# TODO continue re-implementation of replaceFields with get_event like functions
+# TODO make _flat fully virtual given by get_field
 # TODO improve error message after execution error (now execution stack displayed)
 # TODO fix kill button
 # TODO multithreaded search
@@ -180,18 +187,21 @@ class Event():
     self.ufields['_changed_fields'] = None
     self.setSeqnum(-1)
     self.setTimestamp()
+    self.timestampSpan = (0,0)     # Default text span if no timestamp has been found
+
 
   def __str__(self):
     return str(self.timestamp) + " " + self.ufields + " " + self.sfields
 
-  # Function available from Python code
+
+  # Function advertised for Python code
   def set_field(self, name, value):
     if name in self.sfields:
       raise RuntimeError("Overwriting " + name + " system field not allowed")
     else:
       self.ufields[name] = value
 
-  # Function available from Python code
+  # Function advertised for Python code
   def set_fields(self, dictionary):
     for (name, value) in dictionary.items():
       try:
@@ -199,14 +209,14 @@ class Event():
       except:
         pass
 
-  # Function available from Python code
+  # Function advertised for Python code
   def add_field(self, name, value):
     if name in self.sfields or name in self.ufields:
       raise RuntimeError("Field " + name + " already exists")
     else:
       self.ufields[name] = value
 
-  # Function available from Python code
+  # Function advertised for Python code
   def add_fields(self, dictionary):
     for (name, value) in dictionary.items():
       try:
@@ -214,23 +224,42 @@ class Event():
       except:
         pass
 
-  # Function available from Python code
+
+  # Function advertised for Python code
+  def has_field(self, name):
+    """Returns true if the given field name or virtual field name is part of the event"""
+    if name in ['_user_fields', '_system_fields', '_flat', '_core', '_flat_core']:
+      return True
+    return (name in self.ufields) or (name in self.sfields)
+
+  # Function advertised for Python code
   def get_field(self, name):
     if name in self.ufields: return self.ufields[name]
     elif name in self.sfields: return self.sfields[name]
+    elif name == "_user_fields": return str(self.ufields)
+    elif name == "_system_fields": return str(self.sfields)
+    elif name == "_flat":
+      return self.sfields['_raw'].replace('\n', '')
+    elif name == "_core":
+      raw = self.sfields['_raw']
+      return raw[0:self.timestampSpan[0]] + raw[self.timestampSpan[1]:]
+    elif name == "_flat_core":
+      raw = self.sfields['_raw']
+      core = raw[0:self.timestampSpan[0]] + raw[self.timestampSpan[1]:]
+      return core.replace('\n', '')
+
     raise RuntimeError("Field " + name + " not found")
 
-  # Function available from Python code
-  def has_field(self, name):
-    return (name in self.ufields) or (name in self.sfields)
 
-  # Function available from Python code
+  # Function advertised for Python code
   def get_user_fields(self):
     return self.ufields
 
-  # Function available from Python code
+  # Function advertised for Python code
   def get_system_fields(self):
     return self.sfields
+
+
 
   def setRaw(self, raw):
     self.sfields['_raw'] = raw
@@ -249,6 +278,7 @@ class Event():
     self.sfields['_timestamp'] = self.timestamp.isoformat()
     self.sfields['_date'] = str(self.timestamp.date())
     self.sfields['_time'] = str(self.timestamp.time())
+
 
   def replaceFields(self, text, events=None):
     """Replaces fields given as "{field_name}" in a string by their values
@@ -274,12 +304,8 @@ class Event():
       # Case of simple ref to local field (no "@")
       (fieldname, sep, src) = src.partition("@")
       if len(sep) == 0:
-        if fieldname in fields:
-          trans = fields[fieldname]
-        elif fieldname == "_user_fields":
-          trans = str(self.ufields)
-        elif fieldname == "_system_fields":
-          trans = str(self.sfields)
+        if self.has_field(fieldname):
+          trans = self.get_field(fieldname)
         else:
           trans = "FIELD '" + fieldname + "' NOT FOUND"
 
@@ -363,7 +389,7 @@ class Event():
     ts = self.eventType.searchTimestamp(alternativeText if alternativeText else self.sfields['_raw'])
     assert ts is not None, "Timestamp regex does not match in" + str(self.sfields['_raw'])
 
-    # Gets named groups and updates values in system fields for debugging
+    # Gets named groups
     tsfields = ts.groupdict()
 
     # Searches for keys in tsfields with names compatible with timestamp fields
@@ -404,8 +430,12 @@ class Event():
     hour = int(tsfields[names['h']])
     minute = int(tsfields[names['m']])
 
-    # Creates additional fields if everything went well
+    # Sets the timestamp fields and retrieves additional fields if everything went well
     self.setTimestamp(datetime.datetime(year, month, day, hour, minute, second))
+    self.timestampSpan = ts.span()
+    for k in tsfields.keys():
+      if tsfields[k] is not None and k[0] != "_":
+        self.add_field(k, tsfields[k])
 
 
   def parseDisplay(self, previousEvent=None, events=None):
@@ -442,8 +472,8 @@ class Event():
     elem = ET.fromstring(template)
 
     # Selection of fields if not full
-    sel1 = ["_timestamp", "_display_on_match", "_changed_fields"]
-    sel2 = ["_source_path", "_line_number", "_flat"]
+    sel1 = ["_timestamp"]
+    sel2 = ["_line_number", "_source_path", "_flat"]
 
     # Export system fields in alphabetical order or first set of selected fields
     for k in sorted(self.sfields) if full else sel1:
@@ -1713,8 +1743,8 @@ def main(argv):
     # aib specific:
     val = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.pmf.*|.*)" +\
       "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
-      "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|GCM|ground|ipsec|agsm)"+\
-      "[^/]*\\.log[^/]*|messages)"
+      "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|abdc|GCM|ground|ipsec|agsm)"+\
+      "[^/]*\\.log[^/]*|messages[\d\-/]*)"
   else:
     val = ".*\\.log.*"
   si.addOption("Path Filter Regex", desc, "R", "f", "pathfilter", val)
@@ -1787,9 +1817,10 @@ def main(argv):
   desc = "For the Default Event Type, regular expression on file name of log files, used for "   +\
          "search operations\nUse '.*' or '.*\\.log.*' to match all log files ('.*' means any "   +\
          "number of any character), or use a part of the name of a file to target specific log " +\
-         "files (e.g. 'messaging' to match 'bsmessaging' and 'messagingservice')."
-  si.addOption("Filename Regex", desc, "R", "F", "rexfilename", ".*\\.log.*",
-               format="N;W120;GDefault Event Type")
+         "files (e.g. 'messaging' to match 'bsmessaging' and 'messagingservice'). The search is "+\
+         "case-sensitive."
+  si.addOption("Filename Regex", desc, "R", "F", "rexfilename", "(\.log|messages)[.\d\-]*",
+               format="N;W130;GDefault Event Type")
 
   desc = "For the Default Event Type, regular expression to match the timestamp part, on the "   +\
          "first line of event once matched\nThe default value should match most kinds of "       +\
@@ -1801,11 +1832,15 @@ def main(argv):
          "  _D: day, _h: hour, _m: minute, _s: second (default to 00 if not present)"
   if 'aib' in __version__:
     # aib specific:
-    val = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);|" +\
+    val = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);"  +\
+     r"([\d\-;]+#){3}(?P<FPFWS>\d\d)#([\-\w]+#){2}(?P<FLT>[^# ]+) *#"                                +\
+     r"\.*(?P<ACID>[^#\.]+)#([^#]+##?){9}|"                                                      +\
      r"^\[(?P<_D1>\d\d)/(?P<_M1>\d\d)/(?P<_Y1>\d?\d?\d\d) (?P<_h1>\d\d):(?P<_m1>\d\d):"          +\
-     r"(?P<_s1>\d\d)\]|"                                                                         +\
-     r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):(?P<_s2>\d\d),|"  +\
-     r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>[0123 ]\d) (?P<_h3>\d\d):(?P<_m3>\d\d):(?P<_s3>\d\d) |"+\
+     r"(?P<_s1>\d\d)\] \w+ *- |"                                                                 +\
+     r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):"                 +\
+     r"(?P<_s2>\d\d)([^\-]+- ){2}|"                                                              +\
+     r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>[0123 ]\d) (?P<_h3>\d\d):(?P<_m3>\d\d):"             +\
+     r"(?P<_s3>\d\d) (?P<HOST>[^ ]+) |"                                                                          +\
      r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#"
   else:
     val = r"^(?P<_Y>\d{4})-(?P<_D>\d\d)-(?P<_M>\d\d) (?P<_h>\d\d):(?P<_m>\d\d):(?P<_s>\d\d)"
@@ -1836,7 +1871,9 @@ def main(argv):
          "field cfieldname in this event.\n"                                                     +\
          "The following pre-defined fields are available:\n"                                     +\
          " _raw: line of text for the event\n"                                                   +\
+         " _core: same as _raw without the part matching the timestamp if recognized\n"          +\
          " _flat: same as _raw without end of lines\n"                                           +\
+         " _flat_core: same as _core without end of lines\n"                                     +\
          " _name: name of event type\n"                                                          +\
          " _description: description of event type\n"                                            +\
          " _timestamp: timestamp string (date/time ISO format), _time: time, _date: date\n"      +\

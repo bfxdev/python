@@ -7,7 +7,7 @@ ScriptInterface: common user interface for scripts supporting command-line and G
 Version VERSION - BF 2016
 """
 
-__version__ = "0.4.9"
+__version__ = "0.4.10"
 
 # Re-work docstring to insert version from single definition
 __doc__ = __doc__.replace("VERSION", __version__)
@@ -32,6 +32,7 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # 0.4.7      : Added 'T' for text, replaced QPushButton by QToolButton to save space on dialog
 # 0.4.8      : Added search field, removed never-used font selection combo, added widget format
 # 0.4.9      : Improved formatting of tooltips, correct display of "<", ">", "&" and newlines
+# 0.4.10     : Deactivated kill button
 
 # TODO Change multi-threading to multi-processing for better support of "kill" button (now hanging)
 # TODO Improve scroll bar management
@@ -869,7 +870,8 @@ class ScriptInterface:
     if self.mainWidget:
       self.changeWindow(isEnabled = False)
       self.killButton.clicked.connect(self.thread.terminate)
-      self.killButton.setEnabled(True)
+      # TODO: re-activate the button when multi-processing is implemented
+      self.killButton.setEnabled(False)
     self.thread.finished.connect(self.stopCallback)
 
     # Starts
