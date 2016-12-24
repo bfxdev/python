@@ -74,15 +74,18 @@ Known issues:
 # 0.6.5   : Moved code to new EventSet class with lookup, corrections in scanPath
 # 0.6.6   : Added Python functions, fully pseudo-path in _source_path, fixed multiline issue
 # 0.6.7   : Further Python functions (e.g. get_fields), __str__ for Event, _user_fields
-# 0.6.8   : Kill button grayed, user fields from timestamp rex, _core, _flat_core
+# 0.6.8   : Kill button grayed, user fields from timestamp rex, _core, _flat_core, fixed Event str
+# 0.6.9   : Changed finalization sequence (all Python, then display strings), added Event.execute()
 
-__version__ = "0.6.8"
 
+__version__ = "0.6.9"
+
+# TODO add compilation of Pytho code at event type read time (to verify syntax)
+# TODO check name of fields given in python in set_field and add_field
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
 # TODO prevent changing XML structure and comments when saving event type
 # TODO improve events search performance
 # TODO add option remove duplicated events
-# TODO add compilation before starting code (to verify syntax)
 # TODO add new virtual fields (_reduced_raw, _reduced_flat) to hide timestamp rex span
 # TODO continue re-implementation of replaceFields with get_event like functions
 # TODO make _flat fully virtual given by get_field
@@ -164,8 +167,8 @@ class Event():
        - setRaw, setLinenum to set the internal fields once consolidated
        - parseText to extract fields from the text match
        - parseTimestamp to extract time/date fields from text (calls setTimestamp)
-       - parseDisplay to generate the display_on_match field as defined in event type
-       - etc"""
+       - execute to run execOnMatch code
+       - parseDisplay to generate the display_on_match field as defined in event type"""
 
   def __init__(self, eventType, path):
     """Initializes an event with the standard fields"""
@@ -191,7 +194,8 @@ class Event():
 
 
   def __str__(self):
-    return str(self.timestamp) + " " + self.ufields + " " + self.sfields
+    return "Event: ts:" + str(self.timestamp) + " seqnum:" + str(self.seqnum) +\
+           " ufields:" + str(self.ufields) + " sfields:" + str(self.sfields)
 
 
   # Function advertised for Python code
@@ -502,15 +506,11 @@ class Event():
 
     return elem
 
-  def finalize(self, executionContext, previousEvent=None):
-    """Completes event definition using previous event in list, i.e. executes Python code
-       and parses display string"""
+  def execute(self, executionContext):
+    """Executes the python code on match"""
 
     if self.eventType.execOnMatch:
       executionContext.execute(self.eventType.execOnMatch, self.eventType.name, self)
-
-    self.parseDisplay(previousEvent, executionContext.events)
-
 
   def __cmp__(self, other):
     if self.timestamp != other.timestamp:
@@ -633,11 +633,15 @@ class EventSet(dict):
   def finalizeEvents(self, executionContext):
     """Deferred execution of Python code and parsing of display strings for chronological search"""
 
-    # Calls the finalize method of each event in each list
+    # Executes the python code of all the events in the sequence
+    for e in self.sequence:
+      e.execute(executionContext)
+
+    # Calls the finalization methods of each event in each list
     for l in self.values():
       prev = None
       for ev in l:
-        ev.finalize(executionContext, prev)
+        ev.parseDisplay(prev, self)
         prev = ev
 
 
@@ -782,10 +786,11 @@ class EventSearchContext(dict):
     self.events.addEvent(ev)
     self.numFoundEvents += 1
 
-    # Creates display strings immediately using previous event if not chronological
+    # Exec Python and creates display strings immediately using previous event if not chronological
     if not self.chronological:
+      ev.execute(self.executionContext)
       pev = self.events[ev.eventType.name][-2] if len(self.events[ev.eventType.name]) > 1 else None
-      ev.finalize(self.executionContext, pev)
+      ev.parseDisplay(pev, self.events)
 
 
 
