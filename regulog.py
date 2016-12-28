@@ -3,7 +3,7 @@
 #        1         2         3         4         5         6         7         8         9        9
 # 3456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
 """
-ReguLog - Unpacks and analyzes log archives with regular expressions
+ ReguLog - Unpacks and analyzes log archives with regular expressions
 
 ReguLog can be used via a GUI (start script with no argument) or on the command line to:
 
