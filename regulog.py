@@ -76,9 +76,10 @@ Known issues:
 # 0.6.7   : Further Python functions (e.g. get_fields), __str__ for Event, _user_fields
 # 0.6.8   : Kill button grayed, user fields from timestamp rex, _core, _flat_core, fixed Event str
 # 0.6.9   : Changed finalization sequence (all Python, then display strings), added Event.execute()
+# 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty
 
 
-__version__ = "0.6.9"
+__version__ = "0.6.10-draft1"
 
 # TODO add compilation of Pytho code at event type read time (to verify syntax)
 # TODO check name of fields given in python in set_field and add_field
@@ -650,44 +651,43 @@ class EventSet(dict):
 
     # Creates 1 CSV and 2 XML files per event name, one simplified and one full
     for k in self.keys():
-      if len(self[k]) > 0:
-        for ext in [".xml", ".full.xml", ".csv"]:
+      for ext in [".xml", ".full.xml", ".csv"]:
 
-          # Creates XML file (own file creation to avoid keeping whole file in memory)
-          filename = os.path.join(outputdir, k + ext)
-          with open(filename, "w") as f:
+        # Creates XML file (own file creation to avoid keeping whole file in memory)
+        filename = os.path.join(outputdir, k + ext)
+        with open(filename, "w") as f:
 
-            #if self.verbosity >= 2:
-            #  print "--", len(self[k]), "events in", f.name
+          #if self.verbosity >= 2:
+          #  print "--", len(self[k]), "events in", f.name
 
-            # CSV export
-            if ext is ".csv":
-              sfsel = ["_timestamp", "_name", "_display_on_match", "_changed_fields", "_flat"]
-              ufsel = sorted(self[k][0].ufields.keys())
+          # CSV export
+          if ext is ".csv":
+            sfsel = ["_timestamp", "_name", "_display_on_match", "_changed_fields", "_flat"]
+            ufsel = sorted(self[k][0].ufields.keys())
 
-              # CSV Header
-              for s in sfsel + ufsel: f.write(s + ";")
+            # CSV Header
+            for s in sfsel + ufsel: f.write(s + ";")
+            f.write("\n")
+
+            # Export events
+            def trans(s): return "" if s is None else s.replace("\n", " ").replace(";", " ")
+            for ev in self[k]:
+              for kf in sfsel: f.write(trans(ev.sfields[kf] if kf in ev.sfields else None) + ";")
+              for kf in ufsel: f.write(trans(ev.ufields[kf] if kf in ev.ufields else None) + ";")
               f.write("\n")
 
-              # Export events
-              def trans(s): return "" if s is None else s.replace("\n", " ").replace(";", " ")
-              for ev in self[k]:
-                for kf in sfsel: f.write(trans(ev.sfields[kf] if kf in ev.sfields else None) + ";")
-                for kf in ufsel: f.write(trans(ev.ufields[kf] if kf in ev.ufields else None) + ";")
-                f.write("\n")
+          # XML export
+          else:
+            # XML Header
+            f.write("<?xml version='1.0' encoding='utf-8'?>\n<RegulogEvents>\n")
 
-            # XML export
-            else:
-              # XML Header
-              f.write("<?xml version='1.0' encoding='utf-8'?>\n<RegulogEvents>\n")
+            # Adds events to XML data
+            for ev in self[k]:
+              xev = ev.toXML("full" in ext)
+              f.write("  " + ET.tostring(xev) + "\n")
 
-              # Adds events to XML data
-              for ev in self[k]:
-                xev = ev.toXML("full" in ext)
-                f.write("  " + ET.tostring(xev) + "\n")
-
-              # XML End of file
-              f.write("</RegulogEvents>\n")
+            # XML End of file
+            f.write("</RegulogEvents>\n")
 
 
 class EventSearchContext(dict):
@@ -1749,7 +1749,7 @@ def main(argv):
     val = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.pmf.*|.*)" +\
       "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
       "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|abdc|GCM|ground|ipsec|agsm)"+\
-      "[^/]*\\.log[^/]*|messages[\d\-/]*)"
+      "[^/]*\\.log[^/]*|messages[\d\-/]*|custoconf/(config|custo)/)"
   else:
     val = ".*\\.log.*"
   si.addOption("Path Filter Regex", desc, "R", "f", "pathfilter", val)
