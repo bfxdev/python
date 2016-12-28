@@ -4,7 +4,7 @@
 # 3456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
 """
  ReguLog - Unpacks and analyzes log archives with regular expressions
-
+--
 ReguLog can be used via a GUI (start script with no argument) or on the command line to:
 
  - Search for log files according to regexp patterns into directories and archive files. The zip,
