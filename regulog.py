@@ -3,8 +3,8 @@
 #        1         2         3         4         5         6         7         8         9        9
 # 3456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
 """
- ReguLog - Unpacks and analyzes log archives with regular expressions
---
+ReguLog - Unpacks and analyzes log archives with regular expressions
+
 ReguLog can be used via a GUI (start script with no argument) or on the command line to:
 
  - Search for log files according to regexp patterns into directories and archive files. The zip,
@@ -76,19 +76,17 @@ Known issues:
 # 0.6.7   : Further Python functions (e.g. get_fields), __str__ for Event, _user_fields
 # 0.6.8   : Kill button grayed, user fields from timestamp rex, _core, _flat_core, fixed Event str
 # 0.6.9   : Changed finalization sequence (all Python, then display strings), added Event.execute()
-# 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty
+# 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty, _flat not stored
 
 
-__version__ = "0.6.10-draft1"
+__version__ = "0.6.10"
 
-# TODO add compilation of Pytho code at event type read time (to verify syntax)
+# TODO add compilation of Python code at event type read time (to verify syntax)
 # TODO check name of fields given in python in set_field and add_field
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
 # TODO prevent changing XML structure and comments when saving event type
 # TODO improve events search performance
 # TODO add option remove duplicated events
-# TODO add new virtual fields (_reduced_raw, _reduced_flat) to hide timestamp rex span
-# TODO continue re-implementation of replaceFields with get_event like functions
 # TODO make _flat fully virtual given by get_field
 # TODO improve error message after execution error (now execution stack displayed)
 # TODO fix kill button
@@ -180,7 +178,7 @@ class Event():
     self.sfields = dict()
     self.ufields = dict()
 
-    # Stores standard values (check as well replaceFields below for additional items)
+    # Stores standard values (check as well get_field for additional items)
     self.sfields['_name'] = eventType.name
     self.sfields['_description'] = eventType.description if eventType.description else ""
     self.sfields['_source_path'] = path
@@ -233,9 +231,8 @@ class Event():
   # Function advertised for Python code
   def has_field(self, name):
     """Returns true if the given field name or virtual field name is part of the event"""
-    if name in ['_user_fields', '_system_fields', '_flat', '_core', '_flat_core']:
-      return True
-    return (name in self.ufields) or (name in self.sfields)
+    return (name in ['_user_fields', '_system_fields', '_flat', '_core', '_flat_core']) or \
+           (name in self.ufields) or (name in self.sfields)
 
   # Function advertised for Python code
   def get_field(self, name):
@@ -268,7 +265,7 @@ class Event():
 
   def setRaw(self, raw):
     self.sfields['_raw'] = raw
-    self.sfields['_flat'] = raw.replace("\n", " ")
+    #self.sfields['_flat'] = raw.replace("\n", " ")
 
   def setLinenum(self, linenum):
     self.sfields['_line_number'] = str(linenum)
@@ -285,7 +282,7 @@ class Event():
     self.sfields['_time'] = str(self.timestamp.time())
 
 
-  def replaceFields(self, text, events=None):
+  def replaceFields(self, text, events):
     """Replaces fields given as "{field_name}" in a string by their values
        from the object user and system dictionaries"""
 
@@ -299,7 +296,7 @@ class Event():
     # {rfieldname@evname:rcfieldname=fieldname} : lookup of value of rfield in other event
     parts = re.split("({[^{}]+})", res)
     res = parts[0]
-    fields = dict(self.sfields.items() + self.ufields.items())
+    #fields = dict(self.sfields.items() + self.ufields.items())
     for i in range(1, len(parts), 2):
       trans = "N/A"                                # default value if transformation not successful
 
@@ -314,59 +311,36 @@ class Event():
         else:
           trans = "FIELD '" + fieldname + "' NOT FOUND"
 
-      # Case of ref to another event type ("@" present), checks event type name
+      # Case of ref to another event ("@" present), checks event type name
       else:
         (evname, sep, src) = src.partition(":")
         if evname not in events:
-          trans = "EVENT '" + evname + "' NOT FOUND"
-        elif len(events[evname]) == 0:
-          trans = "EMPTY"
+          trans = "EVENT TYPE '" + evname + "' NOT FOUND"
         else:
-          evlist = events[evname]
           ev = None
+          trans = "NO MATCHING EVENT"
 
-          # Latest value of this event (no ":")
+          # Latest value of this event (no ":"), determines nearest event in the past
           if len(sep) == 0:
-
-            # Determines nearest event in the past
-            t = self.timestamp
-            for sev in reversed(evlist):
-              # If another event with same timestamp is found, prefer event from same source
-              if (ev is None and sev.timestamp <= t) or (ev is not None and sev.timestamp == t and\
-                         self.sfields["_source_path"] == sev.sfields["_source_path"]):
-                ev = sev
-                t = ev.timestamp
-              elif sev.timestamp < t:
-                break
-            else:
-              trans = "NO MATCHING EVENT"
+            ev = events.get_event(name=evname, before=self)
 
           # Lookup (":" present), need to extract fields around "="
           else:
             (rfieldname, sep, cfieldname) = src.partition("=")
             if len(sep) == 0:
               trans = "LOOKUP CONDITION '" + src + "' NOT VALID"
-            elif cfieldname not in fields:
+            elif not self.has_field(cfieldname):
               trans = "COMPARISON FIELD '" + fieldname + "' NOT FOUND"
             else:
-              for sev in evlist:
-                if rfieldname in sev.sfields and sev.sfields[rfieldname] == fields[cfieldname] or \
-                   rfieldname in sev.ufields and sev.ufields[rfieldname] == fields[cfieldname]:
-                  ev = sev
-                  break
-              else:
-                trans = "NO MATCHING EVENT"
+              ev = events.get_event(name=evname, before=self,
+                                    fields={rfieldname:self.get_field(cfieldname)})
 
           # Extraction of field value from found ev
           if ev:
-            if fieldname in ev.sfields:
-              trans = ev.sfields[fieldname]
-            elif fieldname in ev.ufields:
-              trans = ev.ufields[fieldname]
+            if ev.has_field(fieldname):
+              trans = ev.get_field(fieldname)
             else:
               trans = "FIELD '" + fieldname + "' NOT IN FOUND EVENT"
-          else:
-            trans = "EVENT NOT FOUND"
 
       # Concatenates result with rest of string
       if trans is None: trans = "N/A"
@@ -478,31 +452,31 @@ class Event():
 
     # Selection of fields if not full
     sel1 = ["_timestamp"]
-    sel2 = ["_line_number", "_source_path", "_flat"]
+    sel2 = [] #["_line_number", "_source_path", "_flat"]
 
     # Export system fields in alphabetical order or first set of selected fields
-    for k in sorted(self.sfields) if full else sel1:
+    for k in sorted(self.sfields.keys() + ["_flat", "_flat_core", "_core"]) if full else sel1:
       e = ET.Element(k)
       if full:
-        e.appendCDATA(self.sfields[k])
+        e.appendCDATA(self.get_field(k))
       else:
-        e.text = self.sfields[k] if self.sfields[k] is not None else ""
+        e.text = self.get_field(k) if self.get_field(k) is not None else ""
       elem.append(e)
 
     # Export user fields in alphabetical order
     for k in sorted(self.ufields):
       e = ET.Element(k)
       if full:
-        e.appendCDATA(self.ufields[k])
+        e.appendCDATA(self.get_field(k))
       else:
-        e.text = self.ufields[k] if self.ufields[k] is not None else ""
+        e.text = self.get_field(k) if self.get_field(k) is not None else ""
       elem.append(e)
 
     # Export second set of selected fields
     if not full:
       for k in sel2:
         e = ET.Element(k)
-        e.text = self.sfields[k] if self.sfields[k] is not None else ""
+        e.text = self.get_field(k) if self.get_field(k) is not None else ""
         elem.append(e)
 
     return elem
@@ -657,9 +631,6 @@ class EventSet(dict):
         filename = os.path.join(outputdir, k + ext)
         with open(filename, "w") as f:
 
-          #if self.verbosity >= 2:
-          #  print "--", len(self[k]), "events in", f.name
-
           # CSV export
           if ext is ".csv":
             sfsel = ["_timestamp", "_name", "_display_on_match", "_changed_fields", "_flat"]
@@ -672,8 +643,8 @@ class EventSet(dict):
             # Export events
             def trans(s): return "" if s is None else s.replace("\n", " ").replace(";", " ")
             for ev in self[k]:
-              for kf in sfsel: f.write(trans(ev.sfields[kf] if kf in ev.sfields else None) + ";")
-              for kf in ufsel: f.write(trans(ev.ufields[kf] if kf in ev.ufields else None) + ";")
+              for kf in sfsel + ufsel:
+                f.write(trans(ev.get_field(kf) if ev.has_field(kf) else None) + ";")
               f.write("\n")
 
           # XML export
