@@ -7,7 +7,7 @@ ScriptInterface: common user interface for scripts supporting command-line and G
 Version VERSION - BF 2016
 """
 
-__version__ = "0.4.11"
+__version__ = "0.4.12"
 
 # Re-work docstring to insert version from single definition
 __doc__ = __doc__.replace("VERSION", __version__)
@@ -34,10 +34,11 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # 0.4.9      : Improved formatting of tooltips, correct display of "<", ">", "&" and newlines
 # 0.4.10     : Deactivated kill button
 # 0.4.11     : Re-implemented search buttons using QPlainTextEdit.find
+# 0.4.12     : Improved scroll bar management with auto scroll if slider is at bottom
+
 
 # TODO Change multi-threading to multi-processing for support of "kill" button (now hanging)
 # TODO Add grep mode
-# TODO Improve scroll bar management
 # TODO Set command buttons to disabled if inputs not valid
 # TODO Add graphical element showing that thread is still alive
 # TODO Improve performance, remove all HMI freeze issues if lots of data is passed to the console
@@ -522,25 +523,33 @@ class ScriptInterface:
         QtCore.QObject.__init__(self)
         self.output.connect(self.processText)
         self.console = console
+        self.console.verticalScrollBar().setValue(self.console.verticalScrollBar().maximum())
 
       def write(self, text):
         self.output.emit(text)
 
       def processText(self, str):
 
-        s = self.console.verticalScrollBar()
-        tracking = True
-        if s:
-          if s.isSliderDown(): tracking = False # sliderPosition() != s.maximum()
-
+        # Improves processing for large amounts of text
         self.console.setUpdatesEnabled(False)
+
+        # Gets scroll bar value
+        scrollbar = self.console.verticalScrollBar()
+        curval = scrollbar.value()
+        tracking = (curval == scrollbar.maximum())
+
+        # Prints text
         self.console.moveCursor(QtGui.QTextCursor.End)
         self.console.insertPlainText(str)
-        # self.console.appendPlainText(str)
 
-        if tracking: self.console.ensureCursorVisible()
+        # Adapts slider if tracking is wished
+        if tracking:
+          self.console.ensureCursorVisible()
+        else:
+          scrollbar.setValue(curval)
+
+        # Re-activation of updates
         self.console.setUpdatesEnabled(True)
-        #QtGui.QApplication.processEvents()
 
 
     def __init__(self, callback, console):
