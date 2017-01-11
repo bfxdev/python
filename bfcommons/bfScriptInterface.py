@@ -7,7 +7,7 @@ ScriptInterface: common user interface for scripts supporting command-line and G
 Version VERSION - BF 2016
 """
 
-__version__ = "0.4.10"
+__version__ = "0.4.11"
 
 # Re-work docstring to insert version from single definition
 __doc__ = __doc__.replace("VERSION", __version__)
@@ -33,8 +33,10 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # 0.4.8      : Added search field, removed never-used font selection combo, added widget format
 # 0.4.9      : Improved formatting of tooltips, correct display of "<", ">", "&" and newlines
 # 0.4.10     : Deactivated kill button
+# 0.4.11     : Re-implemented search buttons using QPlainTextEdit.find
 
-# TODO Change multi-threading to multi-processing for better support of "kill" button (now hanging)
+# TODO Change multi-threading to multi-processing for support of "kill" button (now hanging)
+# TODO Add grep mode
 # TODO Improve scroll bar management
 # TODO Set command buttons to disabled if inputs not valid
 # TODO Add graphical element showing that thread is still alive
@@ -1089,27 +1091,25 @@ class ScriptInterface:
     ml.addWidget(self.console)
     self.runWidgets.append(self.console)
 
-    # Helper functions for console controls
+    # Local function to set the font
     def updateFont():
       f = self.console.document().defaultFont()
       f.setPointSize(int(self.fontSizeCombo.currentText()))
       self.console.setFont(f)
-    def search(forward=True):
-      text = self.console.toPlainText()
-      tosearch = self.searchText.text()
-      cursor = self.console.textCursor()
-      startpos = cursor.selectionEnd() if forward else cursor.selectionStart()
-      if forward:
-        npos = text.indexOf(tosearch, startpos, QtCore.Qt.CaseInsensitive)
-        if npos == -1: npos = text.indexOf(tosearch, 0, QtCore.Qt.CaseInsensitive)
-      else:
-        npos = text.lastIndexOf(tosearch, startpos-1, QtCore.Qt.CaseInsensitive)
-        if npos == -1: npos = text.lastIndexOf(tosearch, -1, QtCore.Qt.CaseInsensitive)
 
-      if npos != -1:
-        cursor.setPosition(npos)
-        cursor.setPosition(npos + len(tosearch), QtGui.QTextCursor.KeepAnchor)
+    # Local function to search for text, and wrap around if not found
+    def search(forward=True):
+      text = self.searchText.text()
+      options = QtGui.QTextDocument.FindFlag(0) if forward else QtGui.QTextDocument.FindBackward
+      if not self.console.find(QtCore.QString(text), options):
+        prevcursor = self.console.textCursor()
+        prevscroll = self.console.verticalScrollBar().value()
+        cursor = prevcursor
+        cursor.movePosition(QtGui.QTextCursor.Start if forward else QtGui.QTextCursor.End)
         self.console.setTextCursor(cursor)
+        if not self.console.find(QtCore.QString(text), options):
+          self.console.setTextCursor(prevcursor)
+          self.console.verticalScrollBar().setValue(prevscroll)
 
     # Connects console controls
     self.expand.stateChanged.connect(lambda: self.changeWindow(isVisible=not self.expand.isChecked()))
