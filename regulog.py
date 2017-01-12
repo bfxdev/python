@@ -77,10 +77,14 @@ Known issues:
 # 0.6.8   : Kill button grayed, user fields from timestamp rex, _core, _flat_core, fixed Event str
 # 0.6.9   : Changed finalization sequence (all Python, then display strings), added Event.execute()
 # 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty, _flat not stored
+# 0.6.11  : Fixed CSV export if event list empty, bfElemTree import, Linux compatibility
 
 
-__version__ = "0.6.10"
+__version__ = "0.6.11"
 
+# TODO re-implement printAdvancement for Linux compatibility
+# TODO improve logs overview with real timestamps in files and nice directories walking
+# TODO CSV export to check all possible fields in all events
 # TODO add compilation of Python code at event type read time (to verify syntax)
 # TODO check name of fields given in python in set_field and add_field
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
@@ -99,65 +103,64 @@ __version__ = "0.6.10"
 # TODO join syslog-style log rotation
 
 # Imports
-import os, sys, traceback, tarfile, zipfile, re, datetime, time, shutil, collections, types, psutil
-import bfcommons
-import xml.etree.ElementTree as ET
-#from types import MethodType
+import os, sys, traceback, tarfile, zipfile, re, datetime, time, shutil, collections
+import psutil
+import bfcommons, bfcommons.bfElemTree as ET
 
 
-# ------------------------- CDATA support adapted from gist.github.com/zlalanne/5711847
-# Defines new function to be added as method, appending a new Element to the current one
-def appendCDATA(self, text):
-  """Appends a CDATA object containing the given text, returns CDATA Element"""
-
-  # Adds new Element with tag "![CDATA["
-  element = ET.SubElement(self, '![CDATA[')
-  element.text = text
-  return element
-
-# Adds method as "unbound method" to Element
-ET.Element.appendCDATA = types.MethodType(appendCDATA, None, ET.Element)
-
-# Saves original serialize method
-ET._original_serialize_xml = ET._serialize_xml
-
-# Defines new function to replace standard serialize function
-def _serialize_xml(write, elem, encoding, qnames, namespaces):
-  if elem.tag == '![CDATA[':
-    write("<%s%s]]>%s" % (elem.tag, elem.text, elem.tail if elem.tail else ""))
-    return
-  return ET._original_serialize_xml(write, elem, encoding, qnames, namespaces)
-
-# Replace global function in ElementTree module
-ET._serialize_xml    = _serialize_xml
-ET._serialize['xml'] = _serialize_xml
-# --------------------------------------------
-
-# -- XML pretty print adapted from http://effbot.org/zone/element-lib.htm
-def indent(self, level=0):
-
-  # Defines prefix to add to line depending on level
-  itail = "\n" + level*"  "
-
-  # TODO Explicit cases and re-check if all combinations produce the wanted output
-  # Case of Element containing other elements
-  if len(self) and self[0].tag != '![CDATA[':
-
-    if not self.text or not self.text.strip():
-      self.text = itail + "  "
-    if not self.tail or not self.tail.strip():
-      self.tail = itail
-    for elem in self:
-      indent(elem, level+1)
-    if not elem.tail or not elem.tail.strip():
-      elem.tail = itail
-  else:
-    if level and (not self.tail or not self.tail.strip()):
-      self.tail = itail
-
-ET.Element.indent = types.MethodType(indent, None, ET.Element)
-
-#-------------------------------------------------------------------------
+## ------------------------- CDATA support adapted from gist.github.com/zlalanne/5711847
+## Defines new function to be added as method, appending a new Element to the current one
+#def appendCDATA(self, text):
+#  """Appends a CDATA object containing the given text, returns CDATA Element"""
+#
+#  # Adds new Element with tag "![CDATA["
+#  element = ET.SubElement(self, '![CDATA[')
+#  element.text = text
+#  return element
+#
+## Adds method as "unbound method" to Element
+#ET.Element.appendCDATA = types.MethodType(appendCDATA, None, ET.Element)
+#
+## Saves original serialize method
+#ET._original_serialize_xml = ET._serialize_xml
+#
+## Defines new function to replace standard serialize function
+#def _serialize_xml(write, elem, encoding, qnames, namespaces):
+#  if elem.tag == '![CDATA[':
+#    write("<%s%s]]>%s" % (elem.tag, elem.text, elem.tail if elem.tail else ""))
+#    return
+#  return ET._original_serialize_xml(write, elem, encoding, qnames, namespaces)
+#
+## Replace global function in ElementTree module
+#ET._serialize_xml    = _serialize_xml
+#ET._serialize['xml'] = _serialize_xml
+## --------------------------------------------
+#
+## -- XML pretty print adapted from http://effbot.org/zone/element-lib.htm
+#def indent(self, level=0):
+#
+#  # Defines prefix to add to line depending on level
+#  itail = "\n" + level*"  "
+#
+#  # TODO Explicit cases and re-check if all combinations produce the wanted output
+#  # Case of Element containing other elements
+#  if len(self) and self[0].tag != '![CDATA[':
+#
+#    if not self.text or not self.text.strip():
+#      self.text = itail + "  "
+#    if not self.tail or not self.tail.strip():
+#      self.tail = itail
+#    for elem in self:
+#      indent(elem, level+1)
+#    if not elem.tail or not elem.tail.strip():
+#      elem.tail = itail
+#  else:
+#    if level and (not self.tail or not self.tail.strip()):
+#      self.tail = itail
+#
+#ET.Element.indent = types.MethodType(indent, None, ET.Element)
+#
+##-------------------------------------------------------------------------
 
 class Event():
   """Data of found occurrences in logs. To be completely defined, the object methods need to be
@@ -632,9 +635,9 @@ class EventSet(dict):
         with open(filename, "w") as f:
 
           # CSV export
-          if ext is ".csv":
+          if ext is ".csv" :
             sfsel = ["_timestamp", "_name", "_display_on_match", "_changed_fields", "_flat"]
-            ufsel = sorted(self[k][0].ufields.keys())
+            ufsel = sorted(self[k][0].ufields.keys()) if len(self[k])>0 else []
 
             # CSV Header
             for s in sfsel + ufsel: f.write(s + ";")
@@ -700,7 +703,16 @@ class EventSearchContext(dict):
         self.lastPrintedAdvancement = datetime.datetime.now()
         dl = self.numProcessedLines - self.lastNumProcessedLines
         self.lastNumProcessedLines = self.numProcessedLines
-        mem = psutil.Process(os.getpid()).get_memory_info()[0]
+
+        # Inconsistencies exist in psutil (different on Linux)
+        proc = psutil.Process(os.getpid())
+        if "get_memory_info" in psutil.Process.__dict__:
+          mem = proc.get_memory_info()[0]
+        elif "memory_info" in psutil.Process.__dict__:
+          mem = proc.memory_info()[0]
+        else:
+          mem = 0
+
         print "\n", self.numProcessedLines, "lines -", int(dl/dt), "lines/sec -", \
             self.numFoundEvents, "events -", int(mem / (1024*1024)), "MBytes -", \
             "Now at", currentLogPath
@@ -1809,15 +1821,16 @@ def main(argv):
   if 'aib' in __version__:
     # aib specific:
     val = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);"  +\
-     r"([\d\-;]+#){3}(?P<FPFWS>\d\d)#([\-\w]+#){2}(?P<FLT>[^# ]+) *#"                                +\
+     r"([\d\-;]+#){3}(?P<FPFWS>\d\d)#([\-\w]+#){2}(?P<FLT>[^# ]+) *#"                            +\
      r"\.*(?P<ACID>[^#\.]+)#([^#]+##?){9}|"                                                      +\
      r"^\[(?P<_D1>\d\d)/(?P<_M1>\d\d)/(?P<_Y1>\d?\d?\d\d) (?P<_h1>\d\d):(?P<_m1>\d\d):"          +\
      r"(?P<_s1>\d\d)\] \w+ *- |"                                                                 +\
      r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):"                 +\
      r"(?P<_s2>\d\d)([^\-]+- ){2}|"                                                              +\
      r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>[0123 ]\d) (?P<_h3>\d\d):(?P<_m3>\d\d):"             +\
-     r"(?P<_s3>\d\d) (?P<HOST>[^ ]+) |"                                                                          +\
-     r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#"
+     r"(?P<_s3>\d\d) (?P<HOST>[^ ]+) |"                                                          +\
+     r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#|" +\
+     r"^(?P<_Y5>\d{4})-(?P<_M5>\d\d)-(?P<_D5>\d\d) (?P<_h5>\d\d):(?P<_m5>\d\d):(?P<_s5>\d\d),"
   else:
     val = r"^(?P<_Y>\d{4})-(?P<_D>\d\d)-(?P<_M>\d\d) (?P<_h>\d\d):(?P<_m>\d\d):(?P<_s>\d\d)"
   si.addOption("Timestamp Regex", desc, 'R', "S", "rextimestamp", val, format='')

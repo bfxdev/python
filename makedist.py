@@ -18,8 +18,6 @@ import os, subprocess, zipfile
 #import xml.etree.ElementTree as ET
 #import bfcommons, zipfile
 
-
-
 class ExecutableArchive(zipfile.ZipFile):
 
   def __init__(self, scriptname):
@@ -56,8 +54,6 @@ class ExecutableArchive(zipfile.ZipFile):
       for dirpath, dirnames, names in os.walk(d):
         for name in names:
           self.write(os.path.join(dirpath, name))
-
-
 
 
 if __name__ == '__main__':
