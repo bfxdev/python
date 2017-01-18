@@ -12,12 +12,13 @@ Import it in place of ElementTree with: import bfcommons.bfElemTree as ET
 BF 2016
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # TODO find/findall with more complex XPath
 
 # Revisions:
 # 0.1.0 : First version
+# 0.1.1 : Explicit declaration of some of the classes to support code completion in editor
 
 # Imports
 import xml.etree.ElementTree as ET
@@ -30,6 +31,15 @@ for name, obj in inspect.getmembers(ET):
   if name[:2] != "__":
     #print "copies", name, ":", obj
     g[name] = obj
+
+# Affectations done another time to support contextual help while editing
+tostring = ET.tostring
+fromstring = ET.fromstring
+dump = ET.dump
+Element = ET.Element
+ElementTree = ET.ElementTree
+SubElement = ET.SubElement
+
 
 # ------------------------- CDATA support adapted from gist.github.com/zlalanne/5711847
 # Defines new function to be added as method, appending a new Element to the current one
