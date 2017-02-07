@@ -37,6 +37,7 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # 0.4.12     : Improved scroll bar management with auto scroll if slider is at bottom
 
 
+# TODO Display a count of matched searched items
 # TODO Change multi-threading to multi-processing for support of "kill" button (now hanging)
 # TODO Add grep mode
 # TODO Set command buttons to disabled if inputs not valid
@@ -50,8 +51,6 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # Imports
 import os, sys, getopt, time, traceback, re #, subprocess
 from PyQt4 import QtGui, QtCore, QtWebKit
-
-
 
 
 class ScriptInterface:
