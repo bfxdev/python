@@ -78,11 +78,11 @@ Known issues:
 # 0.6.9   : Changed finalization sequence (all Python, then display strings), added Event.execute()
 # 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty, _flat not stored
 # 0.6.11  : Fixed CSV export if event list empty, bfElemTree import, Linux compatibility
+# 0.6.12  : Added delete_event, global variables/functions in execute, .tar for IMO in pathfilter
 
 
-__version__ = "0.6.11"
+__version__ = "0.6.12"
 
-# TODO re-implement printAdvancement for Linux compatibility
 # TODO improve logs overview with real timestamps in files and nice directories walking
 # TODO CSV export to check all possible fields in all events
 # TODO add compilation of Python code at event type read time (to verify syntax)
@@ -91,7 +91,6 @@ __version__ = "0.6.11"
 # TODO prevent changing XML structure and comments when saving event type
 # TODO improve events search performance
 # TODO add option remove duplicated events
-# TODO make _flat fully virtual given by get_field
 # TODO improve error message after execution error (now execution stack displayed)
 # TODO fix kill button
 # TODO multithreaded search
@@ -99,7 +98,7 @@ __version__ = "0.6.11"
 # TODO improve globalsource management for extract (single dest dir), LOG dirs reduction
 # TODO Improve global source, i.e. each found archive in dir treated as soon as found
 # TODO Display previous lines when an event is displayed
-# TODO Add option ignore errors
+# TODO Add option ignore Python errors
 # TODO join syslog-style log rotation
 
 # Imports
@@ -196,9 +195,9 @@ class Event():
 
 
   def __str__(self):
-    return "Event: ts:" + str(self.timestamp) + " seqnum:" + str(self.seqnum) +\
+    return "Event: id:" + str(id(self)) + " ts:" + str(self.timestamp) +\
+           " seqnum:" + str(self.seqnum) +\
            " ufields:" + str(self.ufields) + " sfields:" + str(self.sfields)
-
 
   # Function advertised for Python code
   def set_field(self, name, value):
@@ -268,7 +267,6 @@ class Event():
 
   def setRaw(self, raw):
     self.sfields['_raw'] = raw
-    #self.sfields['_flat'] = raw.replace("\n", " ")
 
   def setLinenum(self, linenum):
     self.sfields['_line_number'] = str(linenum)
@@ -455,7 +453,7 @@ class Event():
 
     # Selection of fields if not full
     sel1 = ["_timestamp"]
-    sel2 = [] #["_line_number", "_source_path", "_flat"]
+    sel2 = ["_flat", "_source_path", "_line_number"]
 
     # Export system fields in alphabetical order or first set of selected fields
     for k in sorted(self.sfields.keys() + ["_flat", "_flat_core", "_core"]) if full else sel1:
@@ -502,11 +500,21 @@ class ExecutionContext:
 
   def __init__(self, events, chronological, outputdir):
     self.events = events
-    self.output_directory = outputdir
+    self.outputdir = outputdir
     self.chronological = chronological
 
   def execute(self, code, name, event=None):
     """Executes the given code"""
+
+    # Defines the functions and variables seen as local in execution context
+    def get_event(name=None, fields=None, before=None):
+      return self.events.get_event(name, fields, before)
+    def get_events(name=None, fields=None, before=None, limit=10):
+      return self.events.get_events(name, fields, before, limit)
+    def delete_event(event):
+      return self.events.delete_event(event)
+    output_directory = self.outputdir
+    chronological = self.chronological
 
     exec code in locals()
 
@@ -525,16 +533,32 @@ class EventSet(dict):
     for k in eventTypes.keys():
       self[k] = list()
 
+    # Sequence number to be increased after each addition of event
+    self.curSeqnum = 0
 
-  def addEvent(self, event):
+
+  def add_event(self, event):
     """Adds event after setting the sequence number in event"""
 
-    event.setSeqnum(len(self.sequence))
+    # Sets the sequence number to globally managed value, then increments it
+    event.setSeqnum(self.curSeqnum)
+    self.curSeqnum += 1
+
+    # Adds event to lists
     self[event.eventType.name].append(event)
     self.sequence.append(event)
 
+  def delete_event(self, event):
+    """Removes given event from lists"""
 
-  def get_events(self, name=None, fields=None, before=None, limit=1):
+    # Removes event from both lists if found
+    if event in self.sequence:
+      print ">>>delete from sequence", id(event), "at index", self.sequence.index(event)
+      del self.sequence[self.sequence.index(event)]
+    if event in self[event.eventType.name]:
+      del self[event.eventType.name][self[event.eventType.name].index(event)]
+
+  def get_events(self, name=None, fields=None, before=None, limit=10):
     """Returns an iterator on the latest events in multi-criterion search. The
        function may raise exceptions if the parameters are invalid, or may return None if no
        event was found. Events are searched in the full list (self.sequence) starting from the end.
@@ -542,7 +566,7 @@ class EventSet(dict):
        - name: name of the event, or search all events if no name given
        - before: given as a timestamp or event
        - fields: dictionary of field names/values, all need to match
-       - limit: max number of events to return (default 1)"""
+       - limit: max number of events to return (default 10)"""
 
     # Validates inputs
     if name is not None:
@@ -550,7 +574,9 @@ class EventSet(dict):
 
     # Main loop into full list of events, or dedicated list if name is given
     num = 0
+    print ">>>sequence: ", map(id, self.sequence if name is None else self[name])
     for ev in reversed(self.sequence if name is None else self[name]):
+      print ">>>>>>>cur event:", ev
       isMatching = True
 
       # Checks name
@@ -612,8 +638,11 @@ class EventSet(dict):
     """Deferred execution of Python code and parsing of display strings for chronological search"""
 
     # Executes the python code of all the events in the sequence
-    for e in self.sequence:
-      e.execute(executionContext)
+    # Neeeds full list and references to index because events can be deleted during execution
+    fullseq = list(self.sequence)
+    for e in fullseq:
+      if e in self.sequence:
+        e.execute(executionContext)
 
     # Calls the finalization methods of each event in each list
     for l in self.values():
@@ -766,14 +795,21 @@ class EventSearchContext(dict):
     ev.setLinenum(self.linenum - (eventLinesCount+1))
 
     # Adds created event to current lists
-    self.events.addEvent(ev)
+    self.events.add_event(ev)
     self.numFoundEvents += 1
 
     # Exec Python and creates display strings immediately using previous event if not chronological
     if not self.chronological:
+
+      # Executes execOnMatch code
       ev.execute(self.executionContext)
-      pev = self.events[ev.eventType.name][-2] if len(self.events[ev.eventType.name]) > 1 else None
-      ev.parseDisplay(pev, self.events)
+
+      # Events can be deleted during execution (including the current one)
+      if ev in self.events[ev.eventType.name]:
+
+        # Determines previous event if any and computes display string
+        pev = self.events[ev.eventType.name][-2] if len(self.events[ev.eventType.name])>1 else None
+        ev.parseDisplay(pev, self.events)
 
 
 
@@ -1729,7 +1765,7 @@ def main(argv):
          "'ipsec-18122016.zip'. You can use '[^/]*' for parts where directories must be excluded."
   if 'aib' in __version__:
     # aib specific:
-    val = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.pmf.*|.*)" +\
+    val = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.tar.*|.*)" +\
       "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
       "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|abdc|GCM|ground|ipsec|agsm)"+\
       "[^/]*\\.log[^/]*|messages[\d\-/]*|custoconf/(config|custo)/)"
@@ -1884,16 +1920,15 @@ def main(argv):
          "define variables for use in other Python code parts by using the prefix 'self.', "     +\
          "e.g. 'self.my_counter'. The following pre-defined variables are available:\n"          +\
          " - name: the name of the event type\n"                                                 +\
-         " - self.events: Dictionary with lists of events, referenced by event type name (the "  +\
-         "lists are empty at initialization)\n"                                                  +\
-         " - self.chronological: Set to True if the search is sorted chronologically\n"          +\
-         " - self.output_directory: Contains the path given as outputdir otherwise None"
+         " - chronological: Set to True if the search is sorted chronologically\n"               +\
+         " - output_directory: Contains the path given as outputdir otherwise None"
   si.addOption("Exec On Init", desc, 'T', "I", "execoninit")
 
   desc = "For the Default Event Type, Python code executed when the text regexp matches\nIn "    +\
          "addition to the definition given for the execoninit option, the following variables "  +\
          "and functions are available:\n"                                                        +\
          " - event: the current event with fields set from the text regexp and system fields\n"  +\
+         " - event.timestamp: the timestamp of the event as a datetime object\n"                 +\
          " - event.set_field(name, value): sets an existing or new field (exception raised if "  +\
          "trying to set an existing system field)\n"                                             +\
          " - event.set_fields(dict): sets existing or new fields from a dictionary (no "         +\
@@ -1905,21 +1940,21 @@ def main(argv):
          " - event.get_field(name): returns the value of the given field\n"                      +\
          " - event.get_user_fields(): returns the user fields as a dictionary\n"                 +\
          " - event.get_system_fields(): returns the system fields as a dictionary\n"             +\
-         " - self.events.get_events(name, fields, before, limit): returns an iterator on "       +\
+         " - get_events(name, fields, before, limit): returns an iterator on "                   +\
          "events in the list according to several optional criteria, e.g. "                      +\
-         "get_event(fields={'_name':'val'}, before=event):\n"                                    +\
-         "    - name: matches events with the given name (i.e. name of the related event type "  +\
+         "get_event(fields = {'_name':'val'}, before = event). The available parameters are: \n" +\
+         "    -- name: matches events with the given name (i.e. name of the related event type " +\
          "or '_name' field), provided as a character string\n"                                   +\
-         "    - fields: matches events with the given fields set to the given values (all "      +\
+         "    -- fields: matches events with the given fields set to the given values (all "     +\
          "fields need to match), given as a dictionary of name/value pairs\n"                    +\
-         "    - before: matches events with a timestamp earlier than or equal to the given "     +\
+         "    -- before: matches events with a timestamp earlier than or equal to the given "    +\
          "time reference, provided as a timestamp (datetime.datetime object) or as an event "    +\
          "(in this case it is ensured that the sequence number of the matched event is lower "   +\
          "than the sequence number of the event given as reference, in order to ensure "         +\
          "fine-grained event ordering in case timestamp values are equal)\n"                     +\
-         "    - limit: maximum number of events to be returned (default 1)"                      +\
-         " - self.events.get_event(name, fields, before): returns a single event with the same " +\
-         "parameters as get_events (execpt the limit parameter)"
+         "    -- limit: maximum number of events to be returned (0 for no limit, default 10)\n"  +\
+         " - get_event(name, fields, before): returns a single event with the same " +\
+         "parameters as get_events (except the limit parameter)"
   si.addOption("Exec On Match", desc, 'T', "X", "execonmatch", format='')
 
   desc = "Python code executed on wrapup (end of the search), same pre-defined variables and "   +\
