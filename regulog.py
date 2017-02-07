@@ -79,7 +79,7 @@ Known issues:
 # 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty, _flat not stored
 # 0.6.11  : Fixed CSV export if event list empty, bfElemTree import, Linux compatibility
 # 0.6.12  : Added delete_event, global variables/functions in execute, .tar for IMO in pathfilter
-
+# 0.6.13  :
 
 __version__ = "0.6.12"
 
@@ -553,7 +553,7 @@ class EventSet(dict):
 
     # Removes event from both lists if found
     if event in self.sequence:
-      print ">>>delete from sequence", id(event), "at index", self.sequence.index(event)
+      # print ">>>delete from sequence", id(event), "at index", self.sequence.index(event)
       del self.sequence[self.sequence.index(event)]
     if event in self[event.eventType.name]:
       del self[event.eventType.name][self[event.eventType.name].index(event)]
@@ -574,9 +574,9 @@ class EventSet(dict):
 
     # Main loop into full list of events, or dedicated list if name is given
     num = 0
-    print ">>>sequence: ", map(id, self.sequence if name is None else self[name])
+    # print ">>>sequence: ", map(id, self.sequence if name is None else self[name])
     for ev in reversed(self.sequence if name is None else self[name]):
-      print ">>>>>>>cur event:", ev
+      # print ">>>>>>>cur event:", ev
       isMatching = True
 
       # Checks name
