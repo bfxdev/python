@@ -79,16 +79,17 @@ Known issues:
 # 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty, _flat not stored
 # 0.6.11  : Fixed CSV export if event list empty, bfElemTree import, Linux compatibility
 # 0.6.12  : Added delete_event, global variables/functions in execute, .tar for IMO in pathfilter
-# 0.6.13  :
+# 0.7.0   : Options immediate and execonfile, adapted XML/XSD format, compile before run
+# 0.7.1   : TODO New options for time window selection and timstamp fix
 
-__version__ = "0.6.12"
-
+# TODO add compilation of Python code at event type read time (to verify syntax)
+# TODO prevent changing XML structure and comments when saving event type
+# TODO add option to fix timestamp inconsistencies
+# TODO add options to set min max timestamps to search
 # TODO improve logs overview with real timestamps in files and nice directories walking
 # TODO CSV export to check all possible fields in all events
-# TODO add compilation of Python code at event type read time (to verify syntax)
 # TODO check name of fields given in python in set_field and add_field
 # TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
-# TODO prevent changing XML structure and comments when saving event type
 # TODO improve events search performance
 # TODO add option remove duplicated events
 # TODO improve error message after execution error (now execution stack displayed)
@@ -106,60 +107,41 @@ import os, sys, traceback, tarfile, zipfile, re, datetime, time, shutil, collect
 import psutil
 import bfcommons, bfcommons.bfElemTree as ET
 
+__version__ = "0.7.0-draft1"
 
-## ------------------------- CDATA support adapted from gist.github.com/zlalanne/5711847
-## Defines new function to be added as method, appending a new Element to the current one
-#def appendCDATA(self, text):
-#  """Appends a CDATA object containing the given text, returns CDATA Element"""
-#
-#  # Adds new Element with tag "![CDATA["
-#  element = ET.SubElement(self, '![CDATA[')
-#  element.text = text
-#  return element
-#
-## Adds method as "unbound method" to Element
-#ET.Element.appendCDATA = types.MethodType(appendCDATA, None, ET.Element)
-#
-## Saves original serialize method
-#ET._original_serialize_xml = ET._serialize_xml
-#
-## Defines new function to replace standard serialize function
-#def _serialize_xml(write, elem, encoding, qnames, namespaces):
-#  if elem.tag == '![CDATA[':
-#    write("<%s%s]]>%s" % (elem.tag, elem.text, elem.tail if elem.tail else ""))
-#    return
-#  return ET._original_serialize_xml(write, elem, encoding, qnames, namespaces)
-#
-## Replace global function in ElementTree module
-#ET._serialize_xml    = _serialize_xml
-#ET._serialize['xml'] = _serialize_xml
-## --------------------------------------------
-#
-## -- XML pretty print adapted from http://effbot.org/zone/element-lib.htm
-#def indent(self, level=0):
-#
-#  # Defines prefix to add to line depending on level
-#  itail = "\n" + level*"  "
-#
-#  # TODO Explicit cases and re-check if all combinations produce the wanted output
-#  # Case of Element containing other elements
-#  if len(self) and self[0].tag != '![CDATA[':
-#
-#    if not self.text or not self.text.strip():
-#      self.text = itail + "  "
-#    if not self.tail or not self.tail.strip():
-#      self.tail = itail
-#    for elem in self:
-#      indent(elem, level+1)
-#    if not elem.tail or not elem.tail.strip():
-#      elem.tail = itail
-#  else:
-#    if level and (not self.tail or not self.tail.strip()):
-#      self.tail = itail
-#
-#ET.Element.indent = types.MethodType(indent, None, ET.Element)
-#
-##-------------------------------------------------------------------------
+# aib specific settings
+if 'aib' in __version__:
+
+  defaultPathFilter = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.tar.*|.*)" +\
+    "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
+    "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|abdc|GCM|ground|ipsec|agsm)"+\
+    "[^/]*\\.log[^/]*|messages[\d\-/]*|custoconf/(config|custo)/)"
+
+  defaultRexTimestamp = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-" +\
+    r"(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);"  +\
+    r"([\d\-;]+#){3}(?P<FPFWS>\d\d)#([\-\w]+#){2}(?P<FLT>[^# ]+) *#"                            +\
+    r"\.*(?P<ACID>[^#\.]+)#([^#]+##?){9}|"                                                      +\
+    r"^\[(?P<_D1>\d\d)/(?P<_M1>\d\d)/(?P<_Y1>\d?\d?\d\d) (?P<_h1>\d\d):(?P<_m1>\d\d):"          +\
+    r"(?P<_s1>\d\d)\] \w+ *- |"                                                                 +\
+    r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):"                 +\
+    r"(?P<_s2>\d\d)([^\-]+- ){2}|"                                                              +\
+    r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>[0123 ]\d) (?P<_h3>\d\d):(?P<_m3>\d\d):"             +\
+    r"(?P<_s3>\d\d) (?P<HOST>[^ ]+) |"                                                          +\
+    r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#|" +\
+    r"^(?P<_Y5>\d{4})-(?P<_M5>\d\d)-(?P<_D5>\d\d) (?P<_h5>\d\d):(?P<_m5>\d\d):(?P<_s5>\d\d),"
+
+  defaultRexFilename = "(\.log|messages)[.\d\-]*"
+
+  defaultRexText = ".*"
+
+else:
+  defaultPathFilter = ".*\\.log.*"
+  defaultRexTimestamp = r"^(?P<_Y>\d{4})-(?P<_D>\d\d)-(?P<_M>\d\d) (?P<_h>\d\d):" +\
+    r"(?P<_m>\d\d):(?P<_s>\d\d)"
+  defaultRexFilename = ".*"
+  defaultRexText = ".*"
+
+
 
 class Event():
   """Data of found occurrences in logs. To be completely defined, the object methods need to be
@@ -943,26 +925,63 @@ class EventType:
     """Pre-initialization with given mandatory values set to None"""
     self.name = None
 
-  def init(self, rexFilename, rexText, rexTimestamp, multilineCount=1, caseSensitive=False,
-           name=None, description=None, displayOnMatch=None, displayIfChanged=False,
-           execOnInit=None, execOnMatch=None, execOnWrapup=None):
-    """Initializes fully an event definition from the given parameters"""
-    self.rexFilename = rexFilename
-    self.compiledRexFilename = re.compile(self.rexFilename)
+  def init(self, rexFilename=None, rexText=None, rexTimestamp=None, multilineCount=1,
+           caseSensitive=False, name=None, description=None, displayOnMatch=None,
+           displayIfChanged=False,
+           execOnInit=None, execOnMatch=None, execOnWrapup=None,
+           execOnFile=None, immediate=False):
+    """Initializes an event definition completely from the given parameters"""
+
+    # Local helper functions to treat all inputs the same way
+    def getValid(value, alternative):
+      if value is not None and len(value) > 0: return value
+      else: return alternative
+
+    # Import simple values
+    self.name = getValid(name, "DEFAULT_EVENT_TYPE")
+    self.description = getValid(description, "N/A")
     self.multilineCount = int(multilineCount)
     self.caseSensitive = caseSensitive
-    self.rexText = rexText
-    rexTextFlags = re.MULTILINE | re.DOTALL | (re.IGNORECASE if not self.caseSensitive else 0)
-    self.compiledRexText = re.compile(self.rexText, rexTextFlags)
-    self.rexTimestamp = rexTimestamp
-    self.compiledRexTimestamp = re.compile(self.rexTimestamp)
-    self.name = name if name else "DEFAULT_EVENT_TYPE"
-    self.description = description if description else "N/A"
+    self.immediate = immediate
     self.displayOnMatch = displayOnMatch
     self.displayIfChanged = displayIfChanged
-    self.execOnInit = execOnInit
-    self.execOnMatch = execOnMatch
-    self.execOnWrapup = execOnWrapup
+
+    # Helper function to compile and raise error if regexp cannot be compiled
+    def getCompiledRegexp(name, regexp, flags=0):
+      if regexp is None or len(regexp) == 0: return None
+      try:
+        return re.compile(regexp, flags)
+      except Exception as e:
+        raise RuntimeError("Regexp compile error for '" + name + "': " + str(e) + " in\n" + regexp)
+
+    # Import regexps
+    self.rexFilename = getValid(rexFilename, defaultRexFilename)
+    self.compiledRexFilename = getCompiledRegexp("RexFilename", self.rexFilename)
+    self.rexText = getValid(rexText, defaultRexText)
+    rexTextFlags = (re.IGNORECASE if not self.caseSensitive else 0)
+    rexTextFlags |= (re.MULTILINE | re.DOTALL) if self.multilineCount > 1 else 0
+    self.compiledRexText = getCompiledRegexp("RexText", self.rexText, rexTextFlags)
+    self.rexTimestamp = getValid(rexTimestamp, defaultRexTimestamp)
+    self.compiledRexTimestamp = getCompiledRegexp("RexTimestamp", self.rexTimestamp)
+
+    # Helper function to compile and raise error
+    def getCompiledCode(name, code):
+      if code is None or len(code) == 0: return None
+      try:
+        return compile(code, '<string>', 'exec')
+      except Exception as e:
+        raise RuntimeError("Python code compile error for '" + name + "': " + str(e) +\
+                           " in\n" + code)
+
+    # Import Python code
+    self.execOnInit = getValid(execOnInit, None)
+    self.compiledExecOnInit = getCompiledCode("ExecOnInit", self.execOnInit)
+    self.execOnFile = getValid(execOnFile, None)
+    self.compiledExecOnFile = getCompiledCode("ExecOnFile", self.execOnFile)
+    self.execOnMatch = getValid(execOnMatch, None)
+    self.compiledExecOnMatch = getCompiledCode("ExecOnMatch", self.execOnMatch)
+    self.execOnWrapup = getValid(execOnWrapup, None)
+    self.compiledExecOnWrapup = getCompiledCode("ExecOnWrapup", self.execOnWrapup)
 
   def __str__(self):
     res =  "EventType '" + str(self.name) + "'\n"
@@ -970,9 +989,11 @@ class EventType:
                 ["Text regexp", self.rexText], ["Timestamp regexp", self.rexTimestamp],
                 ["Multiline pattern count", self.multilineCount],
                 ["Case sensitive pattern search", self.caseSensitive],
+                ["Immediate processing", self.immediate],
                 ["Displayed on match", self.displayOnMatch],
                 ["Display if changed", self.displayIfChanged],
                 ["Python code on init", "\n" + str(self.execOnInit)],
+                ["Python code on file", "\n" + str(self.execOnFile)],
                 ["Python code on match", "\n" + str(self.execOnMatch)],
                 ["Python code on wrap-up", "\n" + str(self.execOnWrapup)]]:
       res += "  " + s + ": " + str(v) + "\n"
@@ -1001,68 +1022,141 @@ class EventType:
     # Mandatory fields for an event (exception if not found in XML file)
     assert xev.tag == "EventType", "Attempt to parse tag " + xev.tag + " as log event definition"
     name = xev.find("Name").text
-    rexFilename = xev.find("RexFilename").text
-    rexText = xev.find("RexText").text
-    rexTimestamp = xev.find("RexTimestamp").text
 
-    # Optional fields, set to None if not found or empty
-    e = xev.find("Description")
-    description = None if e is None else None if len(e.text) == 0 else e.text
-    e = xev.find("DisplayOnMatch")
-    displayOnMatch = None if e is None else None if len(e.text) == 0 else e.text
-    e = xev.find("DisplayIfChanged")
-    displayIfChanged = e is not None and e.text == "true"
-    e = xev.find("ExecOnInit")
-    execOnInit = None if e is None else None if len(e.text) == 0 else e.text
-    e = xev.find("ExecOnMatch")
-    execOnMatch = None if e is None else None if len(e.text) == 0 else e.text
-    e = xev.find("ExecOnWrapup")
-    execOnWrapup = None if e is None else None if len(e.text) == 0 else e.text
+    # Helper Functions
+    def getStringTag(elem, tagname):
+      e = elem.find(tagname)
+      return None if e is None else None if len(e.text) == 0 else e.text
+    def getBoolTag(elem, tagname):
+      e = elem.find(tagname)
+      return e is not None and e.text == "true"
+
+    # Optional string fields (replaced by default values if not present via EventType.init)
+    rexFilename =    getStringTag(xev, "RexFilename")
+    rexText =        getStringTag(xev, "RexText")
+    rexTimestamp =   getStringTag(xev, "RexTimestamp")
+    description =    getStringTag(xev, "Description")
+    displayOnMatch = getStringTag(xev, "DisplayOnMatch")
+    execOnInit =     getStringTag(xev, "ExecOnInit")
+    execOnFile =     getStringTag(xev, "ExecOnFile")
+    execOnMatch =    getStringTag(xev, "ExecOnMatch")
+    execOnWrapup =   getStringTag(xev, "ExecOnWrapup")
+
+    # Optional boolean fields
+    displayIfChanged = getBoolTag(xev, "DisplayIfChanged")
+    immediate =        getBoolTag(xev, "Immediate")
+    caseSensitive =    getBoolTag(xev, "CaseSensitive")
+
+    # Other fields
     e = xev.find("MultilineCount")
     multilineCount = 1 if e is None else int(e.text)
-    e = xev.find("CaseSensitive")
-    caseSensitive = e is not None and e.text == "true"
 
     self.init(rexFilename, rexText, rexTimestamp, multilineCount, caseSensitive, name, description,
-           displayOnMatch, displayIfChanged, execOnInit, execOnMatch, execOnWrapup)
+           displayOnMatch, displayIfChanged, execOnInit, execOnMatch, execOnWrapup, execOnFile,
+           immediate)
 
   def toXML(self):
-    """Returns an XML element"""
+    """Returns an XML element with properties of this event type"""
 
-    # Creates basic element object
-    template = "<EventType><Name/><Description/><RexFilename/>" + \
-               "<RexText/><MultilineCount/><CaseSensitive/><RexTimestamp/></EventType>"
-    elem = ET.fromstring(template)
-    elem.find('Name').text = self.name
-    elem.find('Description').text = self.description
-    elem.find('RexFilename').appendCDATA(self.rexFilename)
-    elem.find('RexText').appendCDATA(self.rexText)
-    elem.find('MultilineCount').text = str(self.multilineCount)
-    elem.find('CaseSensitive').text = "true" if self.caseSensitive else "false"
-    elem.find('RexTimestamp').appendCDATA(self.rexTimestamp)
+    # Helper functions
+    def setStringTag(elem, tagname, text, cdata=False):
+      if text is not None and len(text)>0:
+        e = ET.Element(tagname)
+        if not cdata:
+          e.text = text
+        else:
+          e.appendCDATA(text)
+        elem.append(e)
+    def setBoolTag(elem, tagname, val):
+      setStringTag(elem, tagname, None if not val else 'true')
 
-    if self.displayOnMatch:
-      e = ET.Element('DisplayOnMatch')
-      e.appendCDATA(self.displayOnMatch)
-      elem.append(e)
-      e = ET.Element('DisplayIfChanged')
-      e.text = "true" if self.displayIfChanged else "false"
-      elem.append(e)
+    # Creates element object and fields
+    elem = ET.Element('EventType')
+    setStringTag(elem, 'Name', self.name)
+    setStringTag(elem, 'Description', self.description)
+    setStringTag(elem, 'RexFilename', self.rexFilename, True)
+    setStringTag(elem, 'RexText', self.rexText, True)
+    setStringTag(elem, 'MultilineCount', str(self.multilineCount) if self.multilineCount > 1 \
+                                                                  else None)
+    setBoolTag(elem, 'CaseSensitive', self.caseSensitive)
+    setStringTag(elem, 'RexTimestamp', self.rexTimestamp, True)
+    setStringTag(elem, 'DisplayOnMatch', self.displayOnMatch)
+    setBoolTag(elem, 'DisplayIfChanged', self.displayIfChanged)
+    setBoolTag(elem, 'Immediate', self.immediate)
+    setStringTag(elem, 'ExecOnInit', self.execOnInit, True)
+    setStringTag(elem, 'ExecOnFile', self.execOnFile, True)
+    setStringTag(elem, 'ExecOnMatch', self.execOnMatch, True)
+    setStringTag(elem, 'ExecOnWrapup', self.execOnWrapup, True)
 
-    if self.execOnInit:
-      e = ET.Element('ExecOnInit')
-      e.appendCDATA(self.execOnInit)
-      elem.append(e)
-    if self.execOnMatch:
-      e = ET.Element('ExecOnMatch')
-      e.appendCDATA(self.execOnMatch)
-      elem.append(e)
-    if self.execOnWrapup:
-      e = ET.Element('ExecOnWrapup')
-      e.appendCDATA(self.execOnWrapup)
-      elem.append(e)
+#    template = "<EventType><Name/><Description/><RexFilename/>" + \
+#               "<RexText/><MultilineCount/><CaseSensitive/><RexTimestamp/></EventType>"
+#    elem = ET.fromstring(template)
+#    elem.find('Name').text = self.name
+#    elem.find('Description').text = self.description
+#    elem.find('RexFilename').appendCDATA(self.rexFilename)
+#    elem.find('RexText').appendCDATA(self.rexText)
+#    elem.find('MultilineCount').text = str(self.multilineCount)
+#    elem.find('CaseSensitive').text = "true" if self.caseSensitive else "false"
+#    elem.find('RexTimestamp').appendCDATA(self.rexTimestamp)
+#
+#    if self.displayOnMatch:
+#      e = ET.Element('DisplayOnMatch')
+#      e.appendCDATA(self.displayOnMatch)
+#      elem.append(e)
+#      e = ET.Element('DisplayIfChanged')
+#      e.text = "true" if self.displayIfChanged else "false"
+#      elem.append(e)
+#
+#    if self.execOnInit:
+#      e = ET.Element('ExecOnInit')
+#      e.appendCDATA(self.execOnInit)
+#      elem.append(e)
+#    if self.execOnMatch:
+#      e = ET.Element('ExecOnMatch')
+#      e.appendCDATA(self.execOnMatch)
+#      elem.append(e)
+#    if self.execOnWrapup:
+#      e = ET.Element('ExecOnWrapup')
+#      e.appendCDATA(self.execOnWrapup)
+#      elem.append(e)
 
     return elem
+
+  def write(self, filename):
+    """Write event type to file, modifies XML block in place if file already exists.
+       Returns a string with the content of the written file."""
+
+    # Reads existing file or creates an XML Element from template
+    if os.path.isfile(filename):
+      elem = ET.parse(filename)
+    else:
+      template = """<Regulog xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
+                        xsi:noNamespaceSchemaLocation='regulog.xsd'>
+                      <!-- Created with Regulog version """ + __version__ + "</Regulog>"
+      elem = ET.fromstring(template)
+
+    # Creates an XML block from this event type
+    xev = self.toXML()
+
+    # Checks if this event type already exists in file
+    for e in elem.findall('EventType'):
+      n = e.find('Name')
+      if n is not None and n.text == self.get_field("_name"):
+        e.clear()
+        e.extend(list(xev))
+        break
+    else:
+      # Otherwise appends at end of file
+      elem.append(xev)
+
+    # Pretty prints result
+    elem.indent()
+
+    # Writes results
+    ET.ElementTree(elem).write(filename, 'utf-8', True)
+
+    # Prints results
+    return ET.tostring(elem)
 
 
 class EventTypeList(dict):
@@ -1083,29 +1177,6 @@ class EventTypeList(dict):
       le = EventType()
       le.initXML(xev)
       self.addEventType(le)
-
-  def writeEventTypes(self, filename):
-    """Write event types to file, overwrites file if existing"""
-
-    # Creates XML structure
-    template = """<Regulog xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
-                      xsi:noNamespaceSchemaLocation='regulog.xsd'></Regulog>"""
-    elem = ET.fromstring(template)
-
-    # Adds events to XML data
-    for ev in self.values():
-      xev = ev.toXML()
-      elem.append(xev)
-
-    # Pretty print result
-    elem.indent()
-
-    # Prints results
-    if self.verbosity >= 2:
-      print ET.tostring(elem)
-
-    # Writes results
-    ET.ElementTree(elem).write(filename, 'utf-8', True)
 
 
   def printEventTypes(self):
@@ -1617,7 +1688,8 @@ def getDefaultEventType(params):
     le.init(params["rexfilename"], params["rextext"], params["rextimestamp"],
             int(params["multilinecount"]), params["casesensitive"], params["name"],
             params["description"], params["displayonmatch"], params["displayifchanged"],
-            params["execoninit"], params["execonmatch"], params["execonwrapup"], )
+            params["execoninit"], params["execonmatch"], params["execonwrapup"],
+            params["execonfile"], params["immediate"])
 
     return le
 
@@ -1699,26 +1771,17 @@ def saveDefaultEventType(si):
 
   params = si.getValues()
 
-  # Inits vars
-  outputEventTypes = EventTypeList(int(params["verbosity"]))
-
   # Parses destination file
   filename = params["outeventtypes"]
 
-  # Parses existing output file if it exists
-  if os.path.exists(filename):
-    outputEventTypes.readEventTypes(filename)
-
   # Creates single default event from the values entered manually
   le = getDefaultEventType(params)
-  if le:
-    outputEventTypes.addEventType(le)
-    if int(params["verbosity"]) >= 1:
-      print "\nEvent to save:\n", le
 
-  # Saves events
-  if len(outputEventTypes) > 0:
-    outputEventTypes.writeEventTypes(filename)
+  # Saves if event type could be parsed
+  if le:
+    if int(params["verbosity"]) >= 1: print "\nEvent to save:\n", le
+    s = le.write(filename)
+    if int(params["verbosity"]) >= 1: print "\nWrote file:\n", s
     print "\nEvent", le.name, "saved successfully in", filename
   else:
     print "ERROR: No event type definition"
@@ -1763,15 +1826,7 @@ def main(argv):
          "may match non-wanted files due to text at the beginning of the source path. For "      +\
          "example '.*ipsec.*\.log.*' can match any file ending with '.log' in an archive called "+\
          "'ipsec-18122016.zip'. You can use '[^/]*' for parts where directories must be excluded."
-  if 'aib' in __version__:
-    # aib specific:
-    val = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.tar.*|.*)" +\
-      "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
-      "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|abdc|GCM|ground|ipsec|agsm)"+\
-      "[^/]*\\.log[^/]*|messages[\d\-/]*|custoconf/(config|custo)/)"
-  else:
-    val = ".*\\.log.*"
-  si.addOption("Path Filter Regex", desc, "R", "f", "pathfilter", val)
+  si.addOption("Path Filter Regex", desc, "R", "f", "pathfilter", defaultPathFilter)
 
   desc = "Semicolon-separated list of valid archive extensions"
   val = ".zip;.tar;.tar.gz;.tgz"
@@ -1836,14 +1891,12 @@ def main(argv):
 
 
   # Default event type definition
-
-
   desc = "For the Default Event Type, regular expression on file name of log files, used for "   +\
          "search operations\nUse '.*' or '.*\\.log.*' to match all log files ('.*' means any "   +\
          "number of any character), or use a part of the name of a file to target specific log " +\
          "files (e.g. 'messaging' to match 'bsmessaging' and 'messagingservice'). The search is "+\
          "case-sensitive."
-  si.addOption("Filename Regex", desc, "R", "F", "rexfilename", "(\.log|messages)[.\d\-]*",
+  si.addOption("Filename Regex", desc, "R", "F", "rexfilename", defaultRexFilename,
                format="N;W130;GDefault Event Type")
 
   desc = "For the Default Event Type, regular expression to match the timestamp part, on the "   +\
@@ -1854,33 +1907,27 @@ def main(argv):
          "  _Y: year (4 or 2 digits supported, default to file timestamp if not present)\n"      +\
          "  _M: month (2 digits or at least 3 first letters of the month name in English)\n"     +\
          "  _D: day, _h: hour, _m: minute, _s: second (default to 00 if not present)"
-  if 'aib' in __version__:
-    # aib specific:
-    val = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);"  +\
-     r"([\d\-;]+#){3}(?P<FPFWS>\d\d)#([\-\w]+#){2}(?P<FLT>[^# ]+) *#"                            +\
-     r"\.*(?P<ACID>[^#\.]+)#([^#]+##?){9}|"                                                      +\
-     r"^\[(?P<_D1>\d\d)/(?P<_M1>\d\d)/(?P<_Y1>\d?\d?\d\d) (?P<_h1>\d\d):(?P<_m1>\d\d):"          +\
-     r"(?P<_s1>\d\d)\] \w+ *- |"                                                                 +\
-     r"^(?P<_Y2>\d{4})-(?P<_D2>\d\d)-(?P<_M2>\d\d) (?P<_h2>\d\d):(?P<_m2>\d\d):"                 +\
-     r"(?P<_s2>\d\d)([^\-]+- ){2}|"                                                              +\
-     r"^(?P<_M3>[JFMASOND][a-z]{2}) (?P<_D3>[0123 ]\d) (?P<_h3>\d\d):(?P<_m3>\d\d):"             +\
-     r"(?P<_s3>\d\d) (?P<HOST>[^ ]+) |"                                                          +\
-     r"^#(?P<_Y4>\d{4}) (?P<_M4>\d\d) (?P<_D4>\d\d) (?P<_h4>\d\d):(?P<_m4>\d\d):(?P<_s4>\d\d)#|" +\
-     r"^(?P<_Y5>\d{4})-(?P<_M5>\d\d)-(?P<_D5>\d\d) (?P<_h5>\d\d):(?P<_m5>\d\d):(?P<_s5>\d\d),"
-  else:
-    val = r"^(?P<_Y>\d{4})-(?P<_D>\d\d)-(?P<_M>\d\d) (?P<_h>\d\d):(?P<_m>\d\d):(?P<_s>\d\d)"
-  si.addOption("Timestamp Regex", desc, 'R', "S", "rextimestamp", val, format='')
+  si.addOption("Timestamp Regex", desc, 'R', "S", "rextimestamp", defaultRexTimestamp, format='')
 
-  desc = "For the Default Event Type, regular expression text pattern used for matching text "   +\
-         "in log files\nThis regexp is used also for fields extraction with Python-style 'named "+\
+  desc = "For the Default Event Type, main regular expression text pattern (regexp) used for "   +\
+         "matching events in log files\n"                                                        +\
+         "By default, the search is performed case-insensitively (can be reverted by using the " +\
+         "casesensitie option). It supports multiline search if multilinecount is greater "      +\
+         "than 1. "                                                                              +\
+         "This regexp is used as well for user fields extraction, with Python-style 'named "     +\
          "groups' using the specific syntax '(?P<fieldname>pattern)'.\n"                         +\
          "WARNING: as it is a regular expression, it may be necessary to escape some characters "+\
-         "if text is search directly, i.e. the characters '()[]\\.^$' need to be "               +\
-         "prefixed with a backslash character e.g. '\\['."
+         "if text is searched directly, i.e. the characters '()[]\\.^$' need to be "             +\
+         "prefixed with a backslash e.g. '\\['."
   si.addOption("Text Regex", desc, 'R', "T", "rextext")
 
-  desc = "For the Default Event Type, number of lines to gather for multiline event search for " +\
-         "the default event type"
+  desc = "For the Default Event Type, number of log lines the rextext is matched with\n"         +\
+         "In case of events composed of several lines (i.e. containing lines without timestamp) "+\
+         "and the rextext needs to match several lines, a multiline block of consecutive log "   +\
+         "lines is built and matched with the rextext. This parameter defines how many lines "   +\
+         "are gathered in the multiline block for matching (default to 1). When a multiline "    +\
+         "search is performed, the dot '.' matches any character including a newline (options "  +\
+         "DOTALL and MULTILINE activated)."
   si.addOption("Multiline", desc, 'S', "M", "multilinecount", "1", format='W30')
 
   desc = "If set for search with default event type, the text regexp is searched in "            +\
@@ -1910,8 +1957,15 @@ def main(argv):
 
   desc = "For the Default Event Type, if set to true, the displayonmatch string is displayed if "+\
          "text regex matches and extracted fields are different than the previous match (except "+\
-         "system fields like _timestamp)"
-  si.addOption("Display if Changed", desc, 'B', "C", "displayifchanged", format='')
+         "system fields like '_timestamp')"
+  si.addOption("Display if changed", desc, 'B', "C", "displayifchanged", format='')
+
+  desc = "If set to true for the Default Event Type and 'chronological' is selected, the "       +\
+         "treatment of execonmatch and displayonmatch is not deferred after global events sort\n"+\
+         "This can be used for events that appear very frequently and do not need to be stored " +\
+         "in the events list (discarded by using 'delete_event(event)' in execonmatch). "        +\
+         "If 'chronological' is not selected, this option has no effect."
+  si.addOption("Immediate", desc, 'B', "D", "immediate", format='')
 
   # Python Execution code
 
@@ -1924,8 +1978,16 @@ def main(argv):
          " - output_directory: Contains the path given as outputdir otherwise None"
   si.addOption("Exec On Init", desc, 'T', "I", "execoninit")
 
+  desc = "For the Default Event Type, Python code executed when search is started on anew file\n"+\
+         "The following pre-defined variables are available:\n"                                  +\
+         " - source_file: open file descriptor of the file\n"                                         +\
+         " - source_filename: name of the file (no directory part)\n"                            +\
+         " - source_path: pseudo-path of the file"
+  si.addOption("Exec On File", desc, 'T', "F", "execonfile", format='')
+
+
   desc = "For the Default Event Type, Python code executed when the text regexp matches\nIn "    +\
-         "addition to the definition given for the execoninit option, the following variables "  +\
+         "addition to the execoninit option, the following variables "                           +\
          "and functions are available:\n"                                                        +\
          " - event: the current event with fields set from the text regexp and system fields\n"  +\
          " - event.timestamp: the timestamp of the event as a datetime object\n"                 +\
@@ -1962,12 +2024,29 @@ def main(argv):
          "variable)"
   si.addOption("Exec On Wrapup", desc, 'T', "W", "execonwrapup", format='')
 
-  desc = "Name of of the Default Event Type given directly through the GUI or the command-line\n"+\
+  desc = "Name of the Default Event Type given directly through the GUI or the command-line\n"+\
          "The name is used to store the event once fully defined and for data exports."
   si.addOption("Name", desc, "S", "N", "name", format='N;W180')
 
-  desc = "Description of the extra event, used for storing event type once fully defined"
+#  desc = "Name of an event type that defines default properties for the default event type\n"+\
+#         "This can only be defined here if a pattern file is given"
+#  si.addOption("Parent", desc, "S", "P", "parent", format='W180')
+#
+#  desc = "Semi-colon separated list of tags"
+#  si.addOption("Tags", desc, "S", "G", "tags", format='N')
+
+  desc = "Description of the default event type, later available as '_description' field"
   si.addOption("Description", desc, "S", "D", "description", format='')
+
+
+
+
+
+
+
+
+
+
 
 
   # Events output fields
@@ -1978,9 +2057,9 @@ def main(argv):
   desc = "Saves the given default event type into new or existing XML file\nThe output "         +\
          "file is re-parsed and re-written completely using the last available definition."
   si.addCommand("Save Default Event Type", desc,  "save-event-type", lambda: saveDefaultEventType(si),
-                ["outeventtypes", "name", "description", "rexfilename", "rextext"],
-                ["rextimestamp", "displayonmatch", "displayifchanged", "execoninit", "execonmatch",
-                 "execonwrapup"])
+                ["outeventtypes", "name", "description"],
+                ["rexfilename", "rextext", "rextimestamp", "displayonmatch",
+                 "execoninit", "execonfile", "execonmatch", "execonwrapup"])
 
   si.run()
 

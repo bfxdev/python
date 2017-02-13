@@ -1,35 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 	<xs:annotation><xs:documentation>
-XML schema definition of list of events definition used by regulog.py
+XML schema definition of list of event types used by regulog version 0.7.x+
 	</xs:documentation></xs:annotation>
 	<xs:element name="Regulog">
 		<xs:complexType>
 			<xs:sequence>
 				<xs:element name="EventType" minOccurs="1" maxOccurs="unbounded">
 					<xs:complexType>
-						<xs:sequence>
+						<xs:all>
 							<xs:element name="Name" type="xs:string" minOccurs="1" maxOccurs="1">
 								<xs:annotation><xs:documentation>
-Name of the event used for sorting within the XML files, available as variable _name
+Name of the event (used as file name for XML/CSV export, and in Python API), available as '_name' field
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
 							<xs:element name="Description" type="xs:string" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
-Description of the event, available as variable _description
+Description of the event, available as '_description' field
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
-							<xs:element name="RexFilename" type="xs:string" minOccurs="1" maxOccurs="1">
+							<xs:element name="Tag" type="xs:string" minOccurs="0" maxOccurs="unbounded">
+								<xs:annotation><xs:documentation>
+Semicolon separated list of tags applicable for this event type (used for group selection within same pattern file)
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="ParentEventType" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Name of the parent event type if defined
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="RequiredFile" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+File name or path of additional pattern file to be included
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="RexFilename" type="xs:string" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
 Regular expression matching the file name of the log to find this event 
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
-							<xs:element name="RexText" type="xs:string" minOccurs="1" maxOccurs="1">
+							<xs:element name="RexText" type="xs:string" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
-Regular expression matching the text in the log file, i.e. text pattern, used to match the event. If found, the event text is available as variable _raw.
+Regular expression matching the text in the log file, i.e. text pattern, used to match the event. If found, the event text is available as variable '_raw'. If RexText is not defined, the event type is ignored.
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
@@ -41,7 +59,7 @@ Number of lines to scan in a multiline pattern, default is 1
 
 							<xs:element name="CaseSensitive" type="xs:boolean" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
-Number of lines to scan in a multiline pattern, default is 1
+If set to true, text regexp is matched case sensitively
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
@@ -53,7 +71,7 @@ Regular expression matching the time stamp in the event text (parsed once event 
 							
 							<xs:element name="DisplayOnMatch" type="xs:string" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
-Display string in event is matched. This string may contain variables as {variable} 
+Display string in event is matched. This string may contain references to fields as {fieldname}
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
@@ -62,10 +80,22 @@ Display string in event is matched. This string may contain variables as {variab
 If set to true, DisplayOnMatch string in event is displayed only if the named groups changed 
 								</xs:documentation></xs:annotation>
 							</xs:element>
-								
+
+							<xs:element name="Immediate" type="xs:boolean" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+If set to true and chronological is selected, force processing of Python code and DisplayOnMatch right after the match
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
 							<xs:element name="ExecOnInit" type="xs:string" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
 Python code to be executed on start of the search session
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="ExecOnFile" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Python code to be executed when a new file processing is started
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
@@ -81,7 +111,7 @@ Python code to be executed at the end of the search session (all events found an
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
-						</xs:sequence>
+						</xs:all>
 					</xs:complexType>
 				</xs:element>
 			</xs:sequence>
@@ -89,6 +119,7 @@ Python code to be executed at the end of the search session (all events found an
 	</xs:element>
 
 </xs:schema>
+
 
 
 
