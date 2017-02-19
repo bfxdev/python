@@ -79,17 +79,21 @@ Known issues:
 # 0.6.10  : Path filter aib with custoconf, save XML/CSV even if empty, _flat not stored
 # 0.6.11  : Fixed CSV export if event list empty, bfElemTree import, Linux compatibility
 # 0.6.12  : Added delete_event, global variables/functions in execute, .tar for IMO in pathfilter
-# 0.7.0   : Options immediate and execonfile, adapted XML/XSD format, compile before run
-# 0.7.1   : TODO New options for time window selection and timstamp fix
+# 0.7.0   : Added immediate, execonfile, code compile, adapted XML/XSD, order kept EventType save
+# 0.7.1   : TODO New options for time window selection and timstamp fix, Include/Parent/Tag tags
 
-# TODO add compilation of Python code at event type read time (to verify syntax)
-# TODO prevent changing XML structure and comments when saving event type
+# TODO support cascaded event types (Parent, Include), with includes of patterns in other files
+# TODO keep comments in saved file, improve formatting - see http://effbot.org/zone/element-pi.htm
 # TODO add option to fix timestamp inconsistencies
 # TODO add options to set min max timestamps to search
+
+# TODO join syslog-style log rotation
+# TODO limit size of joined log files
+
+# TODO support GUI selection of event types sorted through pre-defined tags
 # TODO improve logs overview with real timestamps in files and nice directories walking
-# TODO CSV export to check all possible fields in all events
+# TODO CSV export to check all possible fields in all events, not only first event
 # TODO check name of fields given in python in set_field and add_field
-# TODO support cascaded event types (Parent, ParentFile), with includes of patterns in other files
 # TODO improve events search performance
 # TODO add option remove duplicated events
 # TODO improve error message after execution error (now execution stack displayed)
@@ -100,22 +104,22 @@ Known issues:
 # TODO Improve global source, i.e. each found archive in dir treated as soon as found
 # TODO Display previous lines when an event is displayed
 # TODO Add option ignore Python errors
-# TODO join syslog-style log rotation
 
 # Imports
 import os, sys, traceback, tarfile, zipfile, re, datetime, time, shutil, collections
 import psutil
 import bfcommons, bfcommons.bfElemTree as ET
 
-__version__ = "0.7.0-draft1"
+__version__ = "0.7.0"
 
 # aib specific settings
 if 'aib' in __version__:
 
-  defaultPathFilter = "(.*_Logs\\.\\d{14}\\.(?P<arn>[^.]{,6})\\.tar.*|.*)" +\
-    "(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
-    "(ics|bite|messaging|export|WLM|TLM|Diameter|Satcom|IMACS|PKI|abdc|GCM|ground|ipsec|agsm)"+\
-    "[^/]*\\.log[^/]*|messages[\d\-/]*|custoconf/(config|custo)/)"
+  defaultPathFilter = r"(.*_Logs\.\d{14}\.(?P<arn>[^.]{,6})\.tar.*|.*)" +\
+    r"(/inbox/(?P<lsap>LSAP)/(?P<pn>[^/]+)/.*|" +\
+    r"(ics|bite|messaging|export|control|WLM|TLM|Diameter|Satcom|" +\
+    r"IMACS|PKI|abdc|GCM|ground|ipsec|agsm)" +\
+    r"[^/]*\.log[^/]*|messages[\d\-/]*|custoconf/(config|custo)/)"
 
   defaultRexTimestamp = r"^#\d\d#(?P<_Y>\d{4})(?P<_M>\d\d)(?P<_D>\d\d)-" +\
     r"(?P<_h>\d\d)(?P<_m>\d\d)(?P<_s>\d\d);"  +\
@@ -245,6 +249,9 @@ class Event():
   def get_system_fields(self):
     return self.sfields
 
+  # Function advertised for Python code
+  def seconds_since(self, ev):
+    return (self.timestamp-ev.timestamp).total_seconds()
 
 
   def setRaw(self, raw):
@@ -465,10 +472,11 @@ class Event():
     return elem
 
   def execute(self, executionContext):
-    """Executes the python code on match"""
+    """Executes the python code ExecOnMatch"""
 
-    if self.eventType.execOnMatch:
-      executionContext.execute(self.eventType.execOnMatch, self.eventType.name, self)
+    # Executes compiled code with re-definition of 'event', if code present
+    executionContext.setLocalVariables(dict(event=self))
+    executionContext.execute('Match', self.eventType.name)
 
   def __cmp__(self, other):
     if self.timestamp != other.timestamp:
@@ -480,25 +488,56 @@ class Event():
 class ExecutionContext:
   """Special object encapsulating the execution of Python code"""
 
-  def __init__(self, events, chronological, outputdir):
+  def __init__(self, events, eventTypes):
+    """Inits the object"""
+
+    # Stores main objects
     self.events = events
-    self.outputdir = outputdir
-    self.chronological = chronological
+    self.eventTypes = eventTypes
 
-  def execute(self, code, name, event=None):
-    """Executes the given code"""
-
-    # Defines the functions and variables seen as local in execution context
+    # Defines additional functions to be visible as local/global functions in execution context
     def get_event(name=None, fields=None, before=None):
       return self.events.get_event(name, fields, before)
-    def get_events(name=None, fields=None, before=None, limit=10):
+    def get_events(name=None, fields=None, before=None, limit=0):
       return self.events.get_events(name, fields, before, limit)
     def delete_event(event):
       return self.events.delete_event(event)
-    output_directory = self.outputdir
-    chronological = self.chronological
 
-    exec code in locals()
+    # Copy of local variables to be extended at each run (including local functions above)
+    self.locals = locals().copy()
+    # chronological, outputdir
+
+  def setLocalVariables(self, vars):
+    """Set local variables given as a dict"""
+
+    self.locals.update(vars)
+
+  def execute(self, phase, name):
+    """Executes the given code, where phase gives the ExecOn<phase> code to call ('Init', 'File',
+       'Match' or 'Wrapup'), name the name of the event type and localVariables a dict of
+       local variables available in currant and later executions"""
+
+    # Determines the related compiled code
+    evt = self.eventTypes[name]
+    code = None
+    if   phase == 'Init' and evt.execOnInit is not None:
+      code = evt.compiledExecOnInit
+    elif phase == 'File' and evt.execOnFile is not None:
+      code = evt.compiledExecOnFile
+    elif phase == 'Match' and evt.execOnMatch is not None:
+      code = evt.compiledExecOnMatch
+    elif phase == 'Wrapup' and evt.execOnWrapup is not None:
+      code = evt.compiledExecOnWrapup
+
+    # Stops if no code needs to be executed
+    if code is None:
+      return
+
+    # Stores given name in local variables
+    self.locals['name'] = name
+
+    # Executes the correct compiled code in onw set of local variables and global variables
+    exec code in self.locals, globals()
 
 
 class EventSet(dict):
@@ -540,7 +579,7 @@ class EventSet(dict):
     if event in self[event.eventType.name]:
       del self[event.eventType.name][self[event.eventType.name].index(event)]
 
-  def get_events(self, name=None, fields=None, before=None, limit=10):
+  def get_events(self, name=None, fields=None, before=None, limit=0):
     """Returns an iterator on the latest events in multi-criterion search. The
        function may raise exceptions if the parameters are invalid, or may return None if no
        event was found. Events are searched in the full list (self.sequence) starting from the end.
@@ -548,7 +587,7 @@ class EventSet(dict):
        - name: name of the event, or search all events if no name given
        - before: given as a timestamp or event
        - fields: dictionary of field names/values, all need to match
-       - limit: max number of events to return (default 10)"""
+       - limit: max number of events to return (default 0)"""
 
     # Validates inputs
     if name is not None:
@@ -620,13 +659,13 @@ class EventSet(dict):
     """Deferred execution of Python code and parsing of display strings for chronological search"""
 
     # Executes the python code of all the events in the sequence
-    # Neeeds full list and references to index because events can be deleted during execution
+    # Needs full list and references to index because events can be deleted during execution
     fullseq = list(self.sequence)
     for e in fullseq:
-      if e in self.sequence:
+      if e in self.sequence and not e.eventType.immediate:
         e.execute(executionContext)
 
-    # Calls the finalization methods of each event in each list
+    # Creates display strings of each event in each list
     for l in self.values():
       prev = None
       for ev in l:
@@ -694,12 +733,13 @@ class EventSearchContext(dict):
     self.events = EventSet(self.eventTypes)
 
     # Creates execution context
-    self.executionContext = ExecutionContext(self.events, chronological, outputdir)
+    self.executionContext = ExecutionContext(self.events, self.eventTypes)
 
     # Execute start Python code of events
+    d = dict(verbosity=verbosity, output_directory = outputdir, chronological=chronological)
+    self.executionContext.setLocalVariables(d)
     for evt in self.eventTypes.values():
-      if evt.execOnInit:
-        self.executionContext.execute(evt.execOnInit, evt.name)
+      self.executionContext.execute('Init', evt.name)
 
 
   def printAdvancement(self, currentLogPath):
@@ -729,7 +769,7 @@ class EventSearchContext(dict):
             "Now at", currentLogPath
 
   def checkSource(self, filePath, fileTime):
-    """Checks if file path is matching at least one event, then prepares internal structures.
+    """Checks if file path is matching at least one event type, then prepares internal structures.
        Timestamp on file is given in order to get Year value if missing in the timestamp
        definition."""
 
@@ -740,7 +780,14 @@ class EventSearchContext(dict):
     self.searchEventTypes = list()
     for evt in self.eventTypes.values():
       if evt.searchFilename(filePath):
+
+        # Stores event type into list
         self.searchEventTypes.append(evt)
+
+        # Executes the related execOnFile code for this event type
+        d = dict(source_filename=os.path.basename(filePath), source_path=filePath)
+        self.executionContext.setLocalVariables(d)
+        self.executionContext.execute('File', evt.name)
 
     # Prepares structures and returns true if at least one event matched
     if len(self.searchEventTypes) > 0:
@@ -781,7 +828,7 @@ class EventSearchContext(dict):
     self.numFoundEvents += 1
 
     # Exec Python and creates display strings immediately using previous event if not chronological
-    if not self.chronological:
+    if ev.eventType.immediate or not self.chronological:
 
       # Executes execOnMatch code
       ev.execute(self.executionContext)
@@ -792,8 +839,6 @@ class EventSearchContext(dict):
         # Determines previous event if any and computes display string
         pev = self.events[ev.eventType.name][-2] if len(self.events[ev.eventType.name])>1 else None
         ev.parseDisplay(pev, self.events)
-
-
 
 
   def checkLine(self, line, finishEvents=True):
@@ -907,8 +952,7 @@ class EventSearchContext(dict):
 
     # Executes wrapup Python code of event types
     for evt in self.eventTypes.values():
-      if evt.execOnWrapup:
-        self.executionContext.execute(evt.execOnWrapup, evt.name)
+      self.executionContext.execute('Wrapup', evt.name)
 
     # Export sorted events
     if outputdir:
@@ -1017,7 +1061,7 @@ class EventType:
 
 
   def initXML(self, xev):
-    """Initializes event definition from an XML element, see regulog.xsd"""
+    """Initializes event type from an XML element, see regulog.xsd"""
 
     # Mandatory fields for an event (exception if not found in XML file)
     assert xev.tag == "EventType", "Attempt to parse tag " + xev.tag + " as log event definition"
@@ -1088,37 +1132,8 @@ class EventType:
     setStringTag(elem, 'ExecOnMatch', self.execOnMatch, True)
     setStringTag(elem, 'ExecOnWrapup', self.execOnWrapup, True)
 
-#    template = "<EventType><Name/><Description/><RexFilename/>" + \
-#               "<RexText/><MultilineCount/><CaseSensitive/><RexTimestamp/></EventType>"
-#    elem = ET.fromstring(template)
-#    elem.find('Name').text = self.name
-#    elem.find('Description').text = self.description
-#    elem.find('RexFilename').appendCDATA(self.rexFilename)
-#    elem.find('RexText').appendCDATA(self.rexText)
-#    elem.find('MultilineCount').text = str(self.multilineCount)
-#    elem.find('CaseSensitive').text = "true" if self.caseSensitive else "false"
-#    elem.find('RexTimestamp').appendCDATA(self.rexTimestamp)
-#
-#    if self.displayOnMatch:
-#      e = ET.Element('DisplayOnMatch')
-#      e.appendCDATA(self.displayOnMatch)
-#      elem.append(e)
-#      e = ET.Element('DisplayIfChanged')
-#      e.text = "true" if self.displayIfChanged else "false"
-#      elem.append(e)
-#
-#    if self.execOnInit:
-#      e = ET.Element('ExecOnInit')
-#      e.appendCDATA(self.execOnInit)
-#      elem.append(e)
-#    if self.execOnMatch:
-#      e = ET.Element('ExecOnMatch')
-#      e.appendCDATA(self.execOnMatch)
-#      elem.append(e)
-#    if self.execOnWrapup:
-#      e = ET.Element('ExecOnWrapup')
-#      e.appendCDATA(self.execOnWrapup)
-#      elem.append(e)
+    elem.indent()
+    elem.tail = "\n\n"
 
     return elem
 
@@ -1128,35 +1143,50 @@ class EventType:
 
     # Reads existing file or creates an XML Element from template
     if os.path.isfile(filename):
-      elem = ET.parse(filename)
+      elemtree = ET.parse(filename)
     else:
       template = """<Regulog xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
                         xsi:noNamespaceSchemaLocation='regulog.xsd'>
                       <!-- Created with Regulog version """ + __version__ + "</Regulog>"
-      elem = ET.fromstring(template)
+      elemtree = ET.fromstring(template)
 
     # Creates an XML block from this event type
     xev = self.toXML()
 
     # Checks if this event type already exists in file
-    for e in elem.findall('EventType'):
+    for e in elemtree.findall('EventType'):
       n = e.find('Name')
-      if n is not None and n.text == self.get_field("_name"):
+      if n is not None and n.text == self.name:
         e.clear()
         e.extend(list(xev))
         break
     else:
       # Otherwise appends at end of file
-      elem.append(xev)
+      elemtree.getroot().append(xev)
+
+    # Re-checks elements that need to be exported as CDATA
+    for e in elemtree.findall('EventType'):
+      for se in e.findall('./*'):
+        if (se.tag[:3] == "Rex" or se.tag[:6] == "ExecOn") and len(se.findall('./*')) == 0:
+          text = se.text
+          se.text = None
+          se.appendCDATA(text)
 
     # Pretty prints result
-    elem.indent()
+    elemtree.getroot().indent()
+
+    # Inserts newlines to improve XML visually
+    elemtree.getroot().text = "\n" + elemtree.getroot().text
+    for e in elemtree.findall('EventType') + elemtree.findall('Include') + \
+             elemtree.findall('Description'):
+      e.tail = "\n" + e.tail
 
     # Writes results
-    ET.ElementTree(elem).write(filename, 'utf-8', True)
+    # ET.ElementTree(elemtree).write(filename, 'utf-8', True)
+    elemtree.write(filename, 'utf-8', True)
 
-    # Prints results
-    return ET.tostring(elem)
+    # Returns resulting XML code for debug
+    return ET.tostring(elemtree.getroot())
 
 
 class EventTypeList(dict):
@@ -1949,7 +1979,7 @@ def main(argv):
          " _name: name of event type\n"                                                          +\
          " _description: description of event type\n"                                            +\
          " _timestamp: timestamp string (date/time ISO format), _time: time, _date: date\n"      +\
-         " _line_number: line number in file\n"                                                  +\
+         " _line_number: number of the first line in log file of the event text\n"               +\
          " _source_path: source pseudopath of the log file\n"                                    +\
          " _source_filename: basename of the source path"
   val = "{_raw} at {_source_path}:{_line_number}"
@@ -1978,9 +2008,8 @@ def main(argv):
          " - output_directory: Contains the path given as outputdir otherwise None"
   si.addOption("Exec On Init", desc, 'T', "I", "execoninit")
 
-  desc = "For the Default Event Type, Python code executed when search is started on anew file\n"+\
+  desc = "For the Default Event Type, Python code executed when search starts on a new file\n"   +\
          "The following pre-defined variables are available:\n"                                  +\
-         " - source_file: open file descriptor of the file\n"                                         +\
          " - source_filename: name of the file (no directory part)\n"                            +\
          " - source_path: pseudo-path of the file"
   si.addOption("Exec On File", desc, 'T', "F", "execonfile", format='')
@@ -2002,6 +2031,7 @@ def main(argv):
          " - event.get_field(name): returns the value of the given field\n"                      +\
          " - event.get_user_fields(): returns the user fields as a dictionary\n"                 +\
          " - event.get_system_fields(): returns the system fields as a dictionary\n"             +\
+         " - event.seconds_since(event): returns the number of seconds since the given event\n"  +\
          " - get_events(name, fields, before, limit): returns an iterator on "                   +\
          "events in the list according to several optional criteria, e.g. "                      +\
          "get_event(fields = {'_name':'val'}, before = event). The available parameters are: \n" +\
@@ -2014,7 +2044,7 @@ def main(argv):
          "(in this case it is ensured that the sequence number of the matched event is lower "   +\
          "than the sequence number of the event given as reference, in order to ensure "         +\
          "fine-grained event ordering in case timestamp values are equal)\n"                     +\
-         "    -- limit: maximum number of events to be returned (0 for no limit, default 10)\n"  +\
+         "    -- limit: maximum number of events to be returned (default 0 for no limit)\n"      +\
          " - get_event(name, fields, before): returns a single event with the same " +\
          "parameters as get_events (except the limit parameter)"
   si.addOption("Exec On Match", desc, 'T', "X", "execonmatch", format='')
