@@ -6,9 +6,36 @@ XML schema definition of list of event types used by regulog version 0.7.x+
 	<xs:element name="Regulog">
 		<xs:complexType>
 			<xs:sequence>
+
+			<xs:element name="Description" type="xs:string" minOccurs="0" maxOccurs="1">
+					<xs:annotation><xs:documentation>
+Description of this file
+					</xs:documentation></xs:annotation>
+				</xs:element>
+
+				<xs:element name="Include" type="xs:string" minOccurs="0" maxOccurs="unbounded">
+					<xs:annotation><xs:documentation>
+File to be included when parsing event types
+					</xs:documentation></xs:annotation>
+				</xs:element>
+			
+
 				<xs:element name="EventType" minOccurs="1" maxOccurs="unbounded">
 					<xs:complexType>
-						<xs:all>
+						<xs:sequence>
+
+							<xs:element name="Parent" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Name of the parent event type if defined
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
+							<xs:element name="Tags" type="xs:string" minOccurs="0" maxOccurs="1">
+								<xs:annotation><xs:documentation>
+Semi-colon separated list of tag(s) applicable for this event type (used for group selection within same pattern file)
+								</xs:documentation></xs:annotation>
+							</xs:element>
+
 							<xs:element name="Name" type="xs:string" minOccurs="1" maxOccurs="1">
 								<xs:annotation><xs:documentation>
 Name of the event (used as file name for XML/CSV export, and in Python API), available as '_name' field
@@ -18,24 +45,6 @@ Name of the event (used as file name for XML/CSV export, and in Python API), ava
 							<xs:element name="Description" type="xs:string" minOccurs="0" maxOccurs="1">
 								<xs:annotation><xs:documentation>
 Description of the event, available as '_description' field
-								</xs:documentation></xs:annotation>
-							</xs:element>
-
-							<xs:element name="Tag" type="xs:string" minOccurs="0" maxOccurs="unbounded">
-								<xs:annotation><xs:documentation>
-Semicolon separated list of tags applicable for this event type (used for group selection within same pattern file)
-								</xs:documentation></xs:annotation>
-							</xs:element>
-
-							<xs:element name="ParentEventType" type="xs:string" minOccurs="0" maxOccurs="1">
-								<xs:annotation><xs:documentation>
-Name of the parent event type if defined
-								</xs:documentation></xs:annotation>
-							</xs:element>
-
-							<xs:element name="RequiredFile" type="xs:string" minOccurs="0" maxOccurs="1">
-								<xs:annotation><xs:documentation>
-File name or path of additional pattern file to be included
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
@@ -111,7 +120,7 @@ Python code to be executed at the end of the search session (all events found an
 								</xs:documentation></xs:annotation>
 							</xs:element>
 
-						</xs:all>
+						</xs:sequence>
 					</xs:complexType>
 				</xs:element>
 			</xs:sequence>
