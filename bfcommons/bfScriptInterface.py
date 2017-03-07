@@ -7,7 +7,7 @@ ScriptInterface: common user interface for scripts supporting command-line and G
 Version VERSION - BF 2016
 """
 
-__version__ = "0.4.12"
+__version__ = "0.4.13"
 
 # Re-work docstring to insert version from single definition
 __doc__ = __doc__.replace("VERSION", __version__)
@@ -35,8 +35,12 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # 0.4.10     : Deactivated kill button
 # 0.4.11     : Re-implemented search buttons using QPlainTextEdit.find
 # 0.4.12     : Improved scroll bar management with auto scroll if slider is at bottom
+# 0.4.13     : Added Date Time as option type 'DT', started 'I', 'F' and 'EI' types
 
 
+# TODO Finish the 'I', 'F' and 'EI' types
+# TODO Add field for extended help
+# TODO Buton to reset parameters to default/command-line values
 # TODO Display a count of matched searched items
 # TODO Change multi-threading to multi-processing for support of "kill" button (now hanging)
 # TODO Add grep mode
@@ -44,13 +48,14 @@ __doc__ = __doc__.replace("VERSION", __version__)
 # TODO Add graphical element showing that thread is still alive
 # TODO Improve performance, remove all HMI freeze issues if lots of data is passed to the console
 # TODO Adds String check per regular expression
-# TODO Ability to reset default value
+# TODO Ability to change values displayed on HMI from script
 # TODO Implement missing types
-# TODO Differentiate enumerations as string or number
+# TODO Differentiate enumerations as string or number (e.g. for verbosity)
+# TODO Support input on console
 
 # Imports
-import os, sys, getopt, time, traceback, re #, subprocess
-from PyQt4 import QtGui, QtCore, QtWebKit
+import os, sys, getopt, time, traceback, re, dateutil.parser, datetime
+from PyQt4 import QtGui, QtCore, QtWebKit, Qt
 
 
 class ScriptInterface:
@@ -77,6 +82,8 @@ class ScriptInterface:
         if len(f)>0:
           self.format[f[0]] = f[1:]
           if f[0] in ['W', 'H']:
+
+
             self.format[f[0]] = int(self.format[f[0]])
 
     def getHTMLString(self, s):
@@ -108,10 +115,14 @@ class ScriptInterface:
             - B: Boolean displayed as a check box or a command-line option without argument
             - IF: Input file, OF: Output file, ID: Input dir, OD: Output dir
             - MID: Semicolon separated multiple input dirs, MIF: Multiple input files
-            - E;id1:name1:descr1;id2:name2:descr2;etc: Enumeration
             - MIDF: Semicolon separated multiple input dirs and files
-            - R: Regular expression, T: Multiline text, S: Generic string, DT: Date and time
-            - I;min:max: Integer number (possibly negative), F;min;max: Floating point number
+            - E;id1:name1:descr1;id2:name2:descr2;etc: Enumeration
+            - R: Regular expression
+            - T: Multiline text (edited in popup)
+            - S: Generic string
+            - I;min:max: Integer number (possibly negative)
+            - F;min;max: Floating point number
+            - DT: Date and time (input given as a string i.e. ISO format)
           - shortid: Single letter to identify the option on command line, e.g. "h" for "-h"
           - longid: String to identify the option on command-line, e.g. "infile" for "--infile="
           - value: Default value given to this option, keeping None if undefined except for
@@ -131,7 +142,7 @@ class ScriptInterface:
       typelist = type.split(";")
       self.type = typelist[0]
 
-      # Enumeration
+      # Setup Enumeration possible values
       if self.type is 'E':
         self.possibleValues = list()
         for e in typelist[1:]:
@@ -144,18 +155,32 @@ class ScriptInterface:
 
 
     def setValue(self, value):
-      """Sets the value, depending on type (no verification at this stage)"""
+      """Sets the value, depending on type (may raise exceptions for non-string types)"""
 
       # Case of default value set to None (undefined or false for booleans)
-      if value is None or value == "": self.value = None if self.type is not 'B' else False
+      if value is None or value == "":
+        self.value = None if self.type is not 'B' else False
 
-      # Case of non-string types (value to be stored as is)
-      elif self.type in ['B', 'I', 'F']:
+      # Case of boolean value given as boolean
+      elif type(value) is bool and self.type == 'B':
         self.value = value
 
-      # Converts to Python string in most cases (otherwise QString if taken from a widget)
+      # Parses input string for non-string types
+      elif type(value) is str and self.type in ['B', 'I', 'EI', 'F', 'DT']:
+        if self.type == 'B':
+          self.value = value.strip().lower() == "true"
+        elif self.type in ['I', 'EI']:
+          print ">>inits int", value
+          self.value = int(value)
+        elif self.type == 'F':
+          self.value = float(value)
+        elif self.type == 'DT':
+          self.value = dateutil.parser.parse(value)
+
+      # Stores given value as is (converts to str from QString if necessary)
       else:
         self.value = str(value)
+
 
     def checkValueValidity(self):
       """Verifies self.value according to type definition, returns a string explaining
@@ -166,11 +191,11 @@ class ScriptInterface:
         return self.name + ": value not set"
 
       # Enumeration
-      if self.type is 'E':
+      if self.type in ['E', 'EI']:
         if self.value not in map(lambda a: a.value, self.possibleValues):
-          res = self.name + ": \"" + self.value + "\" invalid, possible values: "
+          res = self.name + ": \"" + str(self.value) + "\" invalid, possible values: "
           for v in self.possibleValues:
-            res += "\n" + v.value + " : " + v.name + " - " + v.description
+            res += "\n" + str(v.value) + " : " + v.name + " - " + v.description
           return res
 
       # Boolean
@@ -178,6 +203,17 @@ class ScriptInterface:
         if type(self.value) is not bool:
           return self.name + ": boolean internal type not properly set"
 
+#      # Integer
+#      if self.type == 'I':
+#        if type(self.value) is not int:
+#          return self.name + ": integer internal type not properly set"
+#
+#      # Float
+#      if self.type == 'F':
+#        if type(self.value) is not float:
+#          return self.name + ": float internal type not properly set"
+
+      # Regexp
       if self.type is 'R':
         try:
           re.compile(self.value)
@@ -304,6 +340,16 @@ class ScriptInterface:
         self.widget.setFixedHeight(17)
         layout.addWidget(self.widget)
 
+      # Adds QDateTime object with calendar popup for DT type
+      elif self.type == 'DT':
+        layout.addWidget(QtGui.QLabel(self.name))
+        self.widget = QtGui.QDateTimeEdit()
+        self.widget.setCalendarPopup(True)
+        self.widget.setToolTip(self.getHTMLDescription())
+        layout.addWidget(self.widget)
+        self.widget.dateTimeChanged.connect(self.updateValueFromWidget)
+
+
       # Adds a text field and a button for the other types
       else:
         w = QtGui.QLabel(self.name)
@@ -365,16 +411,24 @@ class ScriptInterface:
         self.setValue(bool(self.widget.checkState()))
 
       # Enumeration from drop down box
-      elif self.type is 'E':
+      elif self.type in ['E', 'EI']:
         self.setValue(self.possibleValues[self.widget.currentIndex()].value)
 
-      # Strings
+      # Datetime from QDateTime object
+      elif self.type is 'DT':
+        if self.widget.dateTime() == QtCore.QDateTime():
+          self.value = None
+        else:
+          self.setValue(self.widget.dateTime().toPyDateTime())
+
+      # Strings or other type from QLineEdit
       else:
         s = self.widget.text()
         self.setValue(None if s is None or len(s) == 0 else s)
 
       # Updates widget in case value is not valid
       self.updateWidgetFromValue(colorizeOnly=True)
+
 
     def updateWidgetFromValue(self, colorizeOnly = False):
 
@@ -386,7 +440,7 @@ class ScriptInterface:
       pal = QtGui.QPalette(self.defaultPalette)
       self.widget.setAutoFillBackground(True)
       if self.value is None:    # Lightgray if value is not set
-        pal.setColor(QtGui.QPalette.Base, QtGui.QColor(250, 250, 250))
+        pal.setColor(QtGui.QPalette.Base, QtGui.QColor(245, 245, 245))
         self.widget.setToolTip(self.getHTMLDescription())
       elif val is not None:     # Lightred if value is invalid
         pal.setColor(QtGui.QPalette.Base, QtGui.QColor(255, 220, 220))
@@ -413,6 +467,15 @@ class ScriptInterface:
                 self.widget.setCurrentIndex(i)
                 found = True
             if not found: raise ValueError("Attempt to set enumeration with invalid value")
+
+        # Date Time
+        elif self.type == 'DT':
+          qdt = QtCore.QDateTime(self.value) if self.value is not None else QtCore.QDateTime()
+          self.widget.setDateTime(qdt)
+
+        # Integer / Float
+        elif self.type in ['I', 'F']:
+          self.widget.setText(str(self.value))
 
         # String-like
         else:
@@ -1226,11 +1289,21 @@ if __name__ == '__main__':
 
   si.addOption("String", "Input string", 'S', "s", "string", "bla")
   si.addOption("String2", "Input string", 'S', "2", "string2", "bli", format='W100')
+
   val = 'Line 1\nLine 2\nprint "BLA"\nprint "\\"bla\\""'
   si.addOption("Text", "Input text", 'T', "T", "text", val, format='')
+
+
   si.addOption("Opt", "Description of opt", 'E;first:bla:bla;second:bla2:bla2',
                "Y", "optionY", "second", format='W80')
   si.addOption("Regexp", "Regular expression", 'R', "R", "regexp", "(bla|bli)", format='')
+
+  si.addOption("Integer", "Integer", 'I', "I", "integer", "3", format='N')
+  si.addOption("Float", "Float", 'F', "F", "float", "3.4", format='')
+
+  val = "2017-12-13T20:30:40"
+  si.addOption("Date Time", "Input Date and Time", 'DT', "D", "datetime", val, format='')
+
 
   si.addOption("Input dir", "Input path to look for files", 'ID', "i", "inputdir", ".", format='GInput/Output')
   si.addOption("Output dir", "Output path to store files", 'OD', "o", "outputdir", ".", format='')
@@ -1239,7 +1312,7 @@ if __name__ == '__main__':
   si.addOption("Multiple input dir", "Multiple input dir description", 'MID', "m", "multindir")
   si.addOption("Multiple input file", "Multiple input file description", 'MIF', "n", "multinfile")
   si.addOption("Multiple input file and dirs", "MIDF description", 'MIDF', "z", "multinfiledir")
-  si.addOption("Dummy option A", "Description of option A", 'B', "a", "optiona", format = "E")
+  si.addOption("Dummy option A", "Description of option A", 'B', "a", "optiona", True, format = "E")
   si.addOption("Dummy option B", "Description of option B", 'B', "b", "optionb", format='')
   si.addOption("Dummy option C", "Description of option C", 'E;first:bla:bla;second:bla2:bla2',
                "c", "optionc", "first", format='W80')
